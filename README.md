@@ -1,95 +1,63 @@
-# DistriCache - In-Memory Cache Phase 1
+# DistriCache
 
-A thread-safe, single-node in-memory cache system in Java with LRU (Least Recently Used) eviction and TTL (Time To Live) expiry support.
+[![CI](https://github.com/Brijes987/DistriCache/actions/workflows/ci.yml/badge.svg)](https://github.com/Brijes987/DistriCache/actions/workflows/ci.yml)
 
-## Project Structure
+A thread-safe, in-memory LRU cache with per-entry TTL, written in Java 17 from first principles: a hash
+map plus a **hand-written doubly-linked list**, guarded by a `ReentrantReadWriteLock`.
 
+This is Phase 1 (a single node). Distribution is not built yet; see [Roadmap](#roadmap).
+
+## Features
+- `put`, `put` with TTL, `get`, `remove`, `size`, `capacity` (the `Cache` interface)
+- Strict LRU eviction. Operations on entries without a TTL are O(1); any operation that adds, changes or removes a TTL entry is O(log n) because of the expiry index
+- TTL expiry in three ways: lazily on `get`, eagerly on `put`, and in the background
+- Expired entries never count against capacity and are always removed before a valid entry is evicted
+- `BaselineCache` (a `ConcurrentHashMap` wrapper) for benchmark comparison
+
+## Usage
+```java
+try (LRUCache<String, String> cache = new LRUCache<>(1000)) {
+    cache.put("user:1", "Asha");
+    cache.put("session:9", "token", 30_000);   // expires after 30 s
+    Optional<String> v = cache.get("user:1");
+}
 ```
-DistriCache/
-├── pom.xml                          # Maven configuration
-├── src/
-│   ├── main/
-│   │   └── java/
-│   │       └── com/distri/cache/
-│   │           ├── Cache.java       # Cache interface
-│   │           └── CacheEntry.java  # Cache entry class with LRU and TTL support
-│   └── test/
-│       └── java/
-│           └── com/distri/cache/
-│               ├── properties/      # Property-based tests
-│               ├── unit/            # Example-based unit tests
-│               ├── integration/     # Integration tests
-│               └── generators/      # Custom generators for PBT
-└── README.md
-```
+`new LRUCache<>(capacity, cleanupIntervalMillis)` sets the background cleanup period; `0` turns
+the background task off.
 
-## Requirements
-
-- **Java**: 17 or higher
-- **Build Tool**: Maven 3.6+
-
-## Dependencies
-
-- **JUnit 5** (5.10.1): Unit testing framework
-- **JUnit-Quickcheck** (1.0): Property-based testing
-- **SLF4J** (2.0.9): Logging API
-- **Logback** (1.4.14): Logging implementation
-
-## Building the Project
-
+## Build and test
+Requires Java 17+ and Maven.
 ```bash
-mvn clean compile
+mvn clean test
 ```
 
-## Running Tests
-
+## Benchmarks (JMH)
 ```bash
-mvn test
+mvn -DskipTests install
+cd benchmarks
+mvn -q package
+java -jar target/benchmarks.jar -t 1     # single thread
+java -jar target/benchmarks.jar -t 4     # four threads
 ```
+Results from one machine (Intel Core i3-7020U, 2 cores, JDK 23) are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+Numbers depend on the machine, so run the benchmarks yourself before comparing. The baseline has no eviction
+or ordering, so it is an upper bound, not a fair match.
 
-## Core Features (Phase 1)
+## Testing
+- Unit tests for LRU order, overwrite, validation, capacity edge cases and TTL
+- A regression test for the case where capacity pressure must not evict a valid entry while an expired one exists
+- Property-based tests (jqwik): random operation sequences are replayed against a `LinkedHashMap` reference model
+- Concurrency tests: 8 threads, small capacity and few keys, checking for exceptions, deadlock,
+  `size <= capacity` and an intact internal structure
 
-### 1. Basic Cache Operations
-- `put(key, value)`: Store key-value pairs
-- `get(key)`: Retrieve values by key
-- `remove(key)`: Remove entries
-- `size()`: Get current entry count
-- `capacity()`: Get maximum capacity
+Linearizability is **not** claimed, and these tests do not prove it.
 
-### 2. TTL Expiry Support
-- Store entries with time-to-live expiration
-- Lazy expiry on access
-- Background cleanup thread for physical removal
+## Known limitations
+- One lock guards the cache. A hit on anything other than the most recent entry reorders the list and takes the
+  write lock, so read scalability is limited. This is the price of strict LRU. In the benchmarks, 4-thread
+  throughput was lower than single-thread throughput (see docs/BENCHMARKS.md).
 
-### 3. LRU Eviction Policy
-- Automatic eviction when cache reaches capacity
-- Hand-rolled doubly-linked list for O(1) LRU tracking
-- HashMap for O(1) key lookup
+## Roadmap
+Phase 2 (not started): sharding and replication across nodes.
 
-### 4. Thread Safety
-- ReentrantReadWriteLock for concurrent access
-- Multiple readers or single writer pattern
-- No data corruption under concurrent load
-
-### 5. Null Handling
-- IllegalArgumentException for null keys or values
-- Validation at method entry points
-
-## Design Principles
-
-- **Correctness**: Thread-safe operations with no data corruption
-- **Performance**: O(1) operations for put, get, and remove
-- **Educational**: Hand-rolled implementations to demonstrate JVM concurrency understanding
-- **Testability**: Comprehensive property-based and unit testing
-
-## Next Steps
-
-1. Implement LRU cache with locking strategy
-2. Add background cleanup for TTL expiry
-3. Implement baseline cache for benchmarking
-4. Write comprehensive tests (property-based and unit tests)
-5. Performance benchmarking
-
-## License
-
-This is an educational project for demonstrating in-memory cache implementation in Java.
+Design notes: [docs/DESIGN.md](docs/DESIGN.md)
