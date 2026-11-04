@@ -1,0 +1,363 @@
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.putNewKey
+# Parameters: (impl = current, size = 1000)
+
+# Run progress: 0.00% complete, ETA 00:01:00
+# Fork: 1 of 1
+# Warmup Iteration   1: 0.186 us/op
+# Warmup Iteration   2: 0.182 us/op
+Iteration   1: 0.162 us/op
+Iteration   2: 0.141 us/op
+Iteration   3: 0.141 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.putNewKey":
+  0.148 ±(99.9%) 0.220 us/op [Average]
+  (min, avg, max) = (0.141, 0.148, 0.162), stdev = 0.012
+  CI (99.9%): [? 0, 0.367] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.putNewKey
+# Parameters: (impl = current, size = 10000)
+
+# Run progress: 8.33% complete, ETA 00:01:07
+# Fork: 1 of 1
+# Warmup Iteration   1: 0.206 us/op
+# Warmup Iteration   2: 0.141 us/op
+Iteration   1: 0.138 us/op
+Iteration   2: 0.138 us/op
+Iteration   3: 0.150 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.putNewKey":
+  0.142 ±(99.9%) 0.122 us/op [Average]
+  (min, avg, max) = (0.138, 0.142, 0.150), stdev = 0.007
+  CI (99.9%): [0.020, 0.264] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.putNewKey
+# Parameters: (impl = current, size = 100000)
+
+# Run progress: 16.67% complete, ETA 00:01:02
+# Fork: 1 of 1
+# Warmup Iteration   1: 0.333 us/op
+# Warmup Iteration   2: 0.285 us/op
+Iteration   1: 0.160 us/op
+Iteration   2: 0.151 us/op
+Iteration   3: 0.152 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.putNewKey":
+  0.154 ±(99.9%) 0.096 us/op [Average]
+  (min, avg, max) = (0.151, 0.154, 0.160), stdev = 0.005
+  CI (99.9%): [0.059, 0.250] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.putNewKey
+# Parameters: (impl = legacy, size = 1000)
+
+# Run progress: 25.00% complete, ETA 00:00:55
+# Fork: 1 of 1
+# Warmup Iteration   1: 23.725 us/op
+# Warmup Iteration   2: 23.198 us/op
+Iteration   1: 23.204 us/op
+Iteration   2: 23.081 us/op
+Iteration   3: 23.149 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.putNewKey":
+  23.145 ±(99.9%) 1.124 us/op [Average]
+  (min, avg, max) = (23.081, 23.145, 23.204), stdev = 0.062
+  CI (99.9%): [22.021, 24.268] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.putNewKey
+# Parameters: (impl = legacy, size = 10000)
+
+# Run progress: 33.33% complete, ETA 00:00:48
+# Fork: 1 of 1
+# Warmup Iteration   1: 240.346 us/op
+# Warmup Iteration   2: 240.762 us/op
+Iteration   1: 238.348 us/op
+Iteration   2: 237.281 us/op
+Iteration   3: 240.064 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.putNewKey":
+  238.564 ±(99.9%) 25.622 us/op [Average]
+  (min, avg, max) = (237.281, 238.564, 240.064), stdev = 1.404
+  CI (99.9%): [212.943, 264.186] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.putNewKey
+# Parameters: (impl = legacy, size = 100000)
+
+# Run progress: 41.67% complete, ETA 00:00:42
+# Fork: 1 of 1
+# Warmup Iteration   1: 3701.130 us/op
+# Warmup Iteration   2: 3609.027 us/op
+Iteration   1: 3591.259 us/op
+Iteration   2: 3593.814 us/op
+Iteration   3: 3599.222 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.putNewKey":
+  3594.765 ±(99.9%) 74.176 us/op [Average]
+  (min, avg, max) = (3591.259, 3594.765, 3599.222), stdev = 4.066
+  CI (99.9%): [3520.588, 3668.941] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.sizeCall
+# Parameters: (impl = current, size = 1000)
+
+# Run progress: 50.00% complete, ETA 00:01:39
+# Fork: 1 of 1
+# Warmup Iteration   1: 0.034 us/op
+# Warmup Iteration   2: 0.034 us/op
+Iteration   1: 0.034 us/op
+Iteration   2: 0.032 us/op
+Iteration   3: 0.032 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.sizeCall":
+  0.033 ±(99.9%) 0.018 us/op [Average]
+  (min, avg, max) = (0.032, 0.033, 0.034), stdev = 0.001
+  CI (99.9%): [0.014, 0.051] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.sizeCall
+# Parameters: (impl = current, size = 10000)
+
+# Run progress: 58.33% complete, ETA 00:01:14
+# Fork: 1 of 1
+# Warmup Iteration   1: 0.044 us/op
+# Warmup Iteration   2: 0.039 us/op
+Iteration   1: 0.036 us/op
+Iteration   2: 0.036 us/op
+Iteration   3: 0.036 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.sizeCall":
+  0.036 ±(99.9%) 0.002 us/op [Average]
+  (min, avg, max) = (0.036, 0.036, 0.036), stdev = 0.001
+  CI (99.9%): [0.034, 0.038] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.sizeCall
+# Parameters: (impl = current, size = 100000)
+
+# Run progress: 66.67% complete, ETA 00:00:55
+# Fork: 1 of 1
+# Warmup Iteration   1: 0.040 us/op
+# Warmup Iteration   2: 0.039 us/op
+Iteration   1: 0.038 us/op
+Iteration   2: 0.038 us/op
+Iteration   3: 0.038 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.sizeCall":
+  0.038 ±(99.9%) 0.001 us/op [Average]
+  (min, avg, max) = (0.038, 0.038, 0.038), stdev = 0.001
+  CI (99.9%): [0.036, 0.039] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.sizeCall
+# Parameters: (impl = legacy, size = 1000)
+
+# Run progress: 75.00% complete, ETA 00:00:38
+# Fork: 1 of 1
+# Warmup Iteration   1: 9.038 us/op
+# Warmup Iteration   2: 8.451 us/op
+Iteration   1: 8.630 us/op
+Iteration   2: 8.600 us/op
+Iteration   3: 8.591 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.sizeCall":
+  8.607 ±(99.9%) 0.374 us/op [Average]
+  (min, avg, max) = (8.591, 8.607, 8.630), stdev = 0.020
+  CI (99.9%): [8.233, 8.981] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.sizeCall
+# Parameters: (impl = legacy, size = 10000)
+
+# Run progress: 83.33% complete, ETA 00:00:24
+# Fork: 1 of 1
+# Warmup Iteration   1: 91.626 us/op
+# Warmup Iteration   2: 89.971 us/op
+Iteration   1: 90.072 us/op
+Iteration   2: 90.987 us/op
+Iteration   3: 90.282 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.sizeCall":
+  90.447 ±(99.9%) 8.747 us/op [Average]
+  (min, avg, max) = (90.072, 90.447, 90.987), stdev = 0.479
+  CI (99.9%): [81.700, 99.194] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 2 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: com.distri.cache.bench.SizeScalingBenchmark.sizeCall
+# Parameters: (impl = legacy, size = 100000)
+
+# Run progress: 91.67% complete, ETA 00:00:11
+# Fork: 1 of 1
+# Warmup Iteration   1: 1304.419 us/op
+# Warmup Iteration   2: 1266.319 us/op
+Iteration   1: 1268.862 us/op
+Iteration   2: 1266.109 us/op
+Iteration   3: 1271.021 us/op
+
+
+Result "com.distri.cache.bench.SizeScalingBenchmark.sizeCall":
+  1268.664 ±(99.9%) 44.924 us/op [Average]
+  (min, avg, max) = (1266.109, 1268.664, 1271.021), stdev = 2.462
+  CI (99.9%): [1223.740, 1313.588] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:03:17
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                        (impl)  (size)  Mode  Cnt     Score    Error  Units
+SizeScalingBenchmark.putNewKey  current    1000  avgt    3     0.148 ±  0.220  us/op
+SizeScalingBenchmark.putNewKey  current   10000  avgt    3     0.142 ±  0.122  us/op
+SizeScalingBenchmark.putNewKey  current  100000  avgt    3     0.154 ±  0.096  us/op
+SizeScalingBenchmark.putNewKey   legacy    1000  avgt    3    23.145 ±  1.124  us/op
+SizeScalingBenchmark.putNewKey   legacy   10000  avgt    3   238.564 ± 25.622  us/op
+SizeScalingBenchmark.putNewKey   legacy  100000  avgt    3  3594.765 ± 74.176  us/op
+SizeScalingBenchmark.sizeCall   current    1000  avgt    3     0.033 ±  0.018  us/op
+SizeScalingBenchmark.sizeCall   current   10000  avgt    3     0.036 ±  0.002  us/op
+SizeScalingBenchmark.sizeCall   current  100000  avgt    3     0.038 ±  0.001  us/op
+SizeScalingBenchmark.sizeCall    legacy    1000  avgt    3     8.607 ±  0.374  us/op
+SizeScalingBenchmark.sizeCall    legacy   10000  avgt    3    90.447 ±  8.747  us/op
+SizeScalingBenchmark.sizeCall    legacy  100000  avgt    3  1268.664 ± 44.924  us/op

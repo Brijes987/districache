@@ -43,3 +43,27 @@ bound and not a like-for-like competitor.
 
 Split the cache into independently locked shards so threads touching different keys do not contend.
 This would trade strict global LRU order for per-shard LRU order.
+
+# Scaling with cache size: current implementation vs the earlier one
+
+`SizeScalingBenchmark` fills a cache to capacity, then measures one `put` of a key that is not present
+(so every call evicts) and one `size()` call. `legacy` is `LegacyLRUCache`, the earlier implementation of
+this project, kept in the benchmarks module only for this comparison. It counted valid entries by scanning
+the whole map. Single thread; JMH 1.37, 1 fork, 2 warmup and 3 measurement iterations of 1 s each. Same
+machine as above. Raw output: [`benchmark-results/bench-size.txt`](benchmark-results/bench-size.txt).
+
+Average time per operation in microseconds (lower is better):
+
+| Operation | Entries | Current | Earlier version |
+|---|---|---|---|
+| put of a new key (evicts) | 1,000 | 0.148 | 23.1 |
+| put of a new key (evicts) | 10,000 | 0.142 | 238.6 |
+| put of a new key (evicts) | 100,000 | 0.154 | 3,594.8 |
+| size() | 1,000 | 0.033 | 8.6 |
+| size() | 10,000 | 0.036 | 90.4 |
+| size() | 100,000 | 0.038 | 1,268.7 |
+
+The earlier version's cost grows roughly in proportion to the number of entries (O(n)); the current
+version's cost does not change with size. Only 3 measurement iterations were run, and the current version's
+timings are so small that their error bars are relatively wide, so treat the exact ratio as approximate; the
+trend is unambiguous.
