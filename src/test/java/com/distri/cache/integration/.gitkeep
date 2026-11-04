@@ -1,0 +1,2 @@
+# Integration tests directory
+# This directory will contain integration tests including background cleanup and concurrency tests

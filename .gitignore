@@ -1,0 +1,7 @@
+target/
+.jqwik-database
+test-run*.txt
+patch_backup/
+.idea/
+*.iml
+*.log
