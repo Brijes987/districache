@@ -77,6 +77,11 @@ public final class ShardedLRUCache<K, V> implements Cache<K, V>, AutoCloseable {
         shardFor(key).remove(key);
     }
 
+    /** Removes the key and reports whether a valid entry existed; exact within the key's shard. */
+    public boolean delete(K key) {
+        return shardFor(key).delete(key);
+    }
+
     /** Sum of the shards' valid sizes; not an atomic snapshot under concurrent writes. */
     @Override
     public int size() {

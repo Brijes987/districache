@@ -223,6 +223,29 @@ public final class LRUCache<K, V> implements Cache<K, V>, AutoCloseable {
     }
 
     /**
+     * Removes the entry for {@code key} and reports whether a valid (non-expired) entry was there.
+     * Unlike {@link #remove}, the check and the removal happen under one write lock, so the answer is exact.
+     *
+     * @throws IllegalArgumentException if key is null
+     */
+    public boolean delete(K key) {
+        validateKey(key);
+
+        lock.writeLock().lock();
+        try {
+            CacheEntry<K, V> node = cacheMap.get(key);
+            if (node == null) {
+                return false;
+            }
+            boolean wasValid = !node.isExpired();
+            discard(node);
+            return wasValid;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /**
      * Number of valid (non-expired) entries. Runs under the read lock without mutating anything:
      * it subtracts the entries at the front of the expiry index that are already past their expiry
      * time, which costs O(k) for k expired-but-not-yet-purged entries (0 once cleanup has run).

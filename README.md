@@ -26,6 +26,20 @@ try (LRUCache<String, String> cache = new LRUCache<>(1000)) {
 `new LRUCache<>(capacity, cleanupIntervalMillis)` sets the background cleanup period; `0` turns
 the background task off.
 
+## Server (Redis protocol)
+The cache can be served over TCP using a subset of the Redis wire protocol, so ordinary Redis clients can talk to it.
+Supported commands: `PING`, `ECHO`, `GET`, `SET key value [EX seconds | PX millis]`, `DEL`, `DBSIZE`, `QUIT`.
+Keys and values are UTF-8 text.
+
+```bash
+mvn -DskipTests package
+java -cp target/cache-1.0-SNAPSHOT.jar com.distri.cache.server.ServerMain --port 6380 --capacity 100000
+python scripts/try_server.py 6380
+```
+
+There is no authentication or TLS, so the server listens on `127.0.0.1` only by default. Connections beyond the
+client limit (128 by default) receive an error and are closed; there is no idle timeout.
+
 ## Build and test
 Requires Java 17+ and Maven.
 ```bash
@@ -61,6 +75,6 @@ Linearizability is **not** claimed, and these tests do not prove it.
   (2 cores), but does not exceed its own single-thread speed there. See docs/BENCHMARKS.md.
 
 ## Roadmap
-Phase 2 (not started): sharding and replication across nodes.
-
-Design notes: [docs/DESIGN.md](docs/DESIGN.md)
+- Done: Redis-protocol server
+- Next: Java client library, then consistent hashing across several server instances
+- Not planned yet: replication, persistence, authentication
