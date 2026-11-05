@@ -13,6 +13,7 @@ This is Phase 1 (a single node). Distribution is not built yet; see [Roadmap](#r
 - TTL expiry in three ways: lazily on `get`, eagerly on `put`, and in the background
 - Expired entries never count against capacity and are always removed before a valid entry is evicted
 - `BaselineCache` (a `ConcurrentHashMap` wrapper) for benchmark comparison
+- `ShardedLRUCache`: 16 independently locked shards for less lock contention; eviction order is per shard, not global
 
 ## Usage
 ```java
@@ -56,6 +57,8 @@ Linearizability is **not** claimed, and these tests do not prove it.
 - One lock guards the cache. A hit on anything other than the most recent entry reorders the list and takes the
   write lock, so read scalability is limited. This is the price of strict LRU. In the benchmarks, 4-thread
   throughput was lower than single-thread throughput (see docs/BENCHMARKS.md).
+- `ShardedLRUCache` improves 4-thread throughput by 1.2x to 2.8x over the single-lock cache on the test machine
+  (2 cores), but does not exceed its own single-thread speed there. See docs/BENCHMARKS.md.
 
 ## Roadmap
 Phase 2 (not started): sharding and replication across nodes.

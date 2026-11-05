@@ -3,6 +3,7 @@ package com.distri.cache.bench;
 import com.distri.cache.BaselineCache;
 import com.distri.cache.Cache;
 import com.distri.cache.LRUCache;
+import com.distri.cache.ShardedLRUCache;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import org.openjdk.jmh.annotations.*;
@@ -25,7 +26,7 @@ public class CacheBenchmark {
 
     private static final int KEY_SPACE = 10_000;
 
-    @Param({"lru", "baseline"})
+    @Param({"lru", "sharded", "baseline"})
     public String impl;
 
     /** Cache capacity as a fraction of the key space: smaller = more misses and evictions. */
@@ -37,7 +38,11 @@ public class CacheBenchmark {
     @Setup(Level.Trial)
     public void setup() {
         int capacity = Math.max(1, (int) (KEY_SPACE * capacityRatio));
-        cache = impl.equals("lru") ? new LRUCache<>(capacity, 0) : new BaselineCache<>();
+        switch (impl) {
+            case "lru" -> cache = new LRUCache<>(capacity, 0);
+            case "sharded" -> cache = new ShardedLRUCache<>(capacity, 16, 0);
+            default -> cache = new BaselineCache<>();
+        }
         for (int i = 0; i < KEY_SPACE; i++) {
             cache.put(i, i);
         }

@@ -67,3 +67,47 @@ The earlier version's cost grows roughly in proportion to the number of entries 
 version's cost does not change with size. Only 3 measurement iterations were run, and the current version's
 timings are so small that their error bars are relatively wide, so treat the exact ratio as approximate; the
 trend is unambiguous.
+
+# Sharded cache (`ShardedLRUCache`)
+
+`ShardedLRUCache` splits the cache into 16 independently locked `LRUCache` shards. Threads working on keys in
+different shards do not contend on one lock. The price: LRU order is per shard, not global, so a shard can evict
+while another still has room. Same benchmark and machine as above (`CacheBenchmark`, 2 forks); raw output in
+`benchmark-results/bench2-1thread.txt` and `bench2-4threads.txt`.
+
+Throughput, millions of operations per second (higher is better):
+
+| Benchmark | capacityRatio | Threads | LRUCache | Sharded | Baseline |
+|---|---|---|---|---|---|
+| get | 1.0 | 1 | 5.56 | 6.48 | 41.76 |
+| get | 0.1 | 1 | 16.12 | 16.05 | 38.77 |
+| put | 1.0 | 1 | 7.77 | 8.65 | 14.36 |
+| put | 0.1 | 1 | 7.42 | 7.68 | 12.77 |
+| mixed 90/10 | 1.0 | 1 | 6.06 | 5.25 | 14.54 (noisy run) |
+| mixed 90/10 | 0.1 | 1 | 12.00 | 11.95 | 29.47 |
+| get | 1.0 | 4 | 1.74 | 4.88 | 80.83 |
+| get | 0.1 | 4 | 5.68 | 12.37 | 79.36 |
+| put | 1.0 | 4 | 4.29 | 8.15 | 20.32 |
+| put | 0.1 | 4 | 4.22 | 5.19 | 20.52 |
+| mixed 90/10 | 1.0 | 4 | 2.12 | 5.12 | 42.96 |
+| mixed 90/10 | 0.1 | 4 | 6.54 | 9.68 | 47.71 |
+
+## What this shows
+
+- With one thread, sharding costs nothing measurable: scores match `LRUCache` within run-to-run noise.
+- With four threads, the sharded cache is 1.2x to 2.8x faster than the single-lock `LRUCache`.
+- It does **not** scale beyond its own single-thread speed on this machine (for example `get` at ratio 1.0: 6.48
+  with one thread, 4.88 with four). The CPU has 2 cores, so 4 threads are oversubscribed; a machine with more cores
+  would be needed to judge scaling. The remaining gap has not been investigated.
+- The baseline (`ConcurrentHashMap`) is still far ahead everywhere; it does no eviction and keeps no order.
+- One baseline value (mixed, ratio 1.0, 1 thread) came from a disturbed run (error bar larger than the score);
+  an earlier run of the same benchmark measured 29.4.
+
+## A bug the benchmark found
+
+The first version chose a key's shard from the low bits of its hash. Each shard's own `HashMap` picks buckets
+from the same low bits, so all keys in one shard shared them and piled into a few buckets. Single-thread `put`
+with eviction ran about 2.5x slower than `LRUCache` (2.95 vs 7.36 million ops/s). A one-shard cache matched
+`LRUCache`, which isolated the cause to shard selection. The fix picks the shard from the high bits of a
+multiplicatively mixed hash. After the fix the put scores match (7.68 vs 7.42). Regression tests now check that
+keys of one shard use many different low-bit patterns and that shards get a roughly equal share.

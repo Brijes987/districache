@@ -24,6 +24,13 @@
 6. **TTL contract.** `put(key, value, ttl)` requires `ttl > 0`. Expiry time saturates at `Long.MAX_VALUE`
    instead of overflowing.
 
+7. **Sharding trades global LRU order for less lock contention.** `ShardedLRUCache` splits the cache into
+   independently locked `LRUCache` shards (a power of two). The total capacity is divided exactly, so
+   `size() <= capacity()` holds, but eviction is per shard: a shard may evict while another has room.
+8. **Shard choice must not correlate with HashMap buckets.** The shard is taken from the high bits of a
+   multiplicatively mixed hash. Taking the low bits made all keys in a shard share their low bits and collide in the
+   shard's `HashMap` (measured: puts about 2.5x slower). A regression test guards this.
+
 ## Not claimed
 Linearizability, behaviour under wall-clock jumps, and any performance figure that was not measured with JMH on
 the reader's own machine.

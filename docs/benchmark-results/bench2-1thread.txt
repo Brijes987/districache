@@ -1,0 +1,789 @@
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.get
+# Parameters: (capacityRatio = 1.0, impl = lru)
+
+# Run progress: 0.00% complete, ETA 00:04:48
+# Fork: 1 of 2
+# Warmup Iteration   1: 6.863 ops/us
+# Warmup Iteration   2: 7.661 ops/us
+# Warmup Iteration   3: 7.654 ops/us
+Iteration   1: 5.941 ops/us
+Iteration   2: 5.926 ops/us
+Iteration   3: 5.948 ops/us
+Iteration   4: 5.941 ops/us
+Iteration   5: 5.923 ops/us
+
+# Run progress: 2.78% complete, ETA 00:05:12
+# Fork: 2 of 2
+# Warmup Iteration   1: 6.855 ops/us
+# Warmup Iteration   2: 7.778 ops/us
+# Warmup Iteration   3: 7.261 ops/us
+Iteration   1: 4.035 ops/us
+Iteration   2: 4.427 ops/us
+Iteration   3: 5.735 ops/us
+Iteration   4: 5.825 ops/us
+Iteration   5: 5.866 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.get":
+  5.557 ±(99.9%) 1.070 ops/us [Average]
+  (min, avg, max) = (4.035, 5.557, 5.948), stdev = 0.708
+  CI (99.9%): [4.486, 6.627] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.get
+# Parameters: (capacityRatio = 1.0, impl = sharded)
+
+# Run progress: 5.56% complete, ETA 00:05:00
+# Fork: 1 of 2
+# Warmup Iteration   1: 5.715 ops/us
+# Warmup Iteration   2: 6.633 ops/us
+# Warmup Iteration   3: 6.703 ops/us
+Iteration   1: 6.422 ops/us
+Iteration   2: 6.482 ops/us
+Iteration   3: 6.433 ops/us
+Iteration   4: 6.472 ops/us
+Iteration   5: 6.491 ops/us
+
+# Run progress: 8.33% complete, ETA 00:04:52
+# Fork: 2 of 2
+# Warmup Iteration   1: 5.669 ops/us
+# Warmup Iteration   2: 6.583 ops/us
+# Warmup Iteration   3: 6.621 ops/us
+Iteration   1: 6.488 ops/us
+Iteration   2: 6.507 ops/us
+Iteration   3: 6.518 ops/us
+Iteration   4: 6.497 ops/us
+Iteration   5: 6.489 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.get":
+  6.480 ±(99.9%) 0.046 ops/us [Average]
+  (min, avg, max) = (6.422, 6.480, 6.518), stdev = 0.031
+  CI (99.9%): [6.433, 6.526] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.get
+# Parameters: (capacityRatio = 1.0, impl = baseline)
+
+# Run progress: 11.11% complete, ETA 00:04:42
+# Fork: 1 of 2
+# Warmup Iteration   1: 32.399 ops/us
+# Warmup Iteration   2: 31.853 ops/us
+# Warmup Iteration   3: 43.777 ops/us
+Iteration   1: 43.781 ops/us
+Iteration   2: 43.596 ops/us
+Iteration   3: 43.750 ops/us
+Iteration   4: 43.423 ops/us
+Iteration   5: 37.305 ops/us
+
+# Run progress: 13.89% complete, ETA 00:04:33
+# Fork: 2 of 2
+# Warmup Iteration   1: 33.510 ops/us
+# Warmup Iteration   2: 41.236 ops/us
+# Warmup Iteration   3: 41.625 ops/us
+Iteration   1: 41.494 ops/us
+Iteration   2: 41.667 ops/us
+Iteration   3: 41.459 ops/us
+Iteration   4: 41.386 ops/us
+Iteration   5: 39.727 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.get":
+  41.759 ±(99.9%) 3.126 ops/us [Average]
+  (min, avg, max) = (37.305, 41.759, 43.781), stdev = 2.067
+  CI (99.9%): [38.633, 44.884] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.get
+# Parameters: (capacityRatio = 0.1, impl = lru)
+
+# Run progress: 16.67% complete, ETA 00:04:24
+# Fork: 1 of 2
+# Warmup Iteration   1: 17.417 ops/us
+# Warmup Iteration   2: 18.925 ops/us
+# Warmup Iteration   3: 16.225 ops/us
+Iteration   1: 16.563 ops/us
+Iteration   2: 16.266 ops/us
+Iteration   3: 15.239 ops/us
+Iteration   4: 15.977 ops/us
+Iteration   5: 16.129 ops/us
+
+# Run progress: 19.44% complete, ETA 00:04:15
+# Fork: 2 of 2
+# Warmup Iteration   1: 17.639 ops/us
+# Warmup Iteration   2: 18.200 ops/us
+# Warmup Iteration   3: 14.794 ops/us
+Iteration   1: 16.457 ops/us
+Iteration   2: 15.992 ops/us
+Iteration   3: 16.400 ops/us
+Iteration   4: 16.104 ops/us
+Iteration   5: 16.030 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.get":
+  16.116 ±(99.9%) 0.559 ops/us [Average]
+  (min, avg, max) = (15.239, 16.116, 16.563), stdev = 0.370
+  CI (99.9%): [15.557, 16.675] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.get
+# Parameters: (capacityRatio = 0.1, impl = sharded)
+
+# Run progress: 22.22% complete, ETA 00:04:06
+# Fork: 1 of 2
+# Warmup Iteration   1: 15.513 ops/us
+# Warmup Iteration   2: 17.659 ops/us
+# Warmup Iteration   3: 15.560 ops/us
+Iteration   1: 15.793 ops/us
+Iteration   2: 16.002 ops/us
+Iteration   3: 16.029 ops/us
+Iteration   4: 16.046 ops/us
+Iteration   5: 15.451 ops/us
+
+# Run progress: 25.00% complete, ETA 00:03:57
+# Fork: 2 of 2
+# Warmup Iteration   1: 15.676 ops/us
+# Warmup Iteration   2: 17.756 ops/us
+# Warmup Iteration   3: 16.206 ops/us
+Iteration   1: 16.246 ops/us
+Iteration   2: 16.191 ops/us
+Iteration   3: 16.251 ops/us
+Iteration   4: 16.261 ops/us
+Iteration   5: 16.236 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.get":
+  16.051 ±(99.9%) 0.392 ops/us [Average]
+  (min, avg, max) = (15.451, 16.051, 16.261), stdev = 0.259
+  CI (99.9%): [15.658, 16.443] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.get
+# Parameters: (capacityRatio = 0.1, impl = baseline)
+
+# Run progress: 27.78% complete, ETA 00:03:48
+# Fork: 1 of 2
+# Warmup Iteration   1: 32.896 ops/us
+# Warmup Iteration   2: 43.300 ops/us
+# Warmup Iteration   3: 41.991 ops/us
+Iteration   1: 42.926 ops/us
+Iteration   2: 42.510 ops/us
+Iteration   3: 39.685 ops/us
+Iteration   4: 42.659 ops/us
+Iteration   5: 42.014 ops/us
+
+# Run progress: 30.56% complete, ETA 00:03:39
+# Fork: 2 of 2
+# Warmup Iteration   1: 12.967 ops/us
+# Warmup Iteration   2: 17.786 ops/us
+# Warmup Iteration   3: 24.190 ops/us
+Iteration   1: 34.177 ops/us
+Iteration   2: 31.210 ops/us
+Iteration   3: 35.353 ops/us
+Iteration   4: 37.102 ops/us
+Iteration   5: 40.029 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.get":
+  38.766 ±(99.9%) 6.214 ops/us [Average]
+  (min, avg, max) = (31.210, 38.766, 42.926), stdev = 4.110
+  CI (99.9%): [32.553, 44.980] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.mixed90_10
+# Parameters: (capacityRatio = 1.0, impl = lru)
+
+# Run progress: 33.33% complete, ETA 00:03:31
+# Fork: 1 of 2
+# Warmup Iteration   1: 5.278 ops/us
+# Warmup Iteration   2: 7.273 ops/us
+# Warmup Iteration   3: 6.856 ops/us
+Iteration   1: 6.468 ops/us
+Iteration   2: 6.123 ops/us
+Iteration   3: 6.227 ops/us
+Iteration   4: 6.208 ops/us
+Iteration   5: 6.307 ops/us
+
+# Run progress: 36.11% complete, ETA 00:03:22
+# Fork: 2 of 2
+# Warmup Iteration   1: 5.381 ops/us
+# Warmup Iteration   2: 7.146 ops/us
+# Warmup Iteration   3: 7.361 ops/us
+Iteration   1: 6.252 ops/us
+Iteration   2: 5.826 ops/us
+Iteration   3: 5.740 ops/us
+Iteration   4: 5.591 ops/us
+Iteration   5: 5.881 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.mixed90_10":
+  6.062 ±(99.9%) 0.430 ops/us [Average]
+  (min, avg, max) = (5.591, 6.062, 6.468), stdev = 0.284
+  CI (99.9%): [5.633, 6.492] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.mixed90_10
+# Parameters: (capacityRatio = 1.0, impl = sharded)
+
+# Run progress: 38.89% complete, ETA 00:03:13
+# Fork: 1 of 2
+# Warmup Iteration   1: 3.671 ops/us
+# Warmup Iteration   2: 5.304 ops/us
+# Warmup Iteration   3: 5.739 ops/us
+Iteration   1: 6.284 ops/us
+Iteration   2: 6.202 ops/us
+Iteration   3: 5.930 ops/us
+Iteration   4: 5.851 ops/us
+Iteration   5: 6.138 ops/us
+
+# Run progress: 41.67% complete, ETA 00:03:04
+# Fork: 2 of 2
+# Warmup Iteration   1: 4.268 ops/us
+# Warmup Iteration   2: 4.837 ops/us
+# Warmup Iteration   3: 5.123 ops/us
+Iteration   1: 5.185 ops/us
+Iteration   2: 2.710 ops/us
+Iteration   3: 3.423 ops/us
+Iteration   4: 5.343 ops/us
+Iteration   5: 5.435 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.mixed90_10":
+  5.250 ±(99.9%) 1.846 ops/us [Average]
+  (min, avg, max) = (2.710, 5.250, 6.284), stdev = 1.221
+  CI (99.9%): [3.404, 7.096] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.mixed90_10
+# Parameters: (capacityRatio = 1.0, impl = baseline)
+
+# Run progress: 44.44% complete, ETA 00:02:56
+# Fork: 1 of 2
+# Warmup Iteration   1: 7.027 ops/us
+# Warmup Iteration   2: 8.609 ops/us
+# Warmup Iteration   3: 2.723 ops/us
+Iteration   1: 4.887 ops/us
+Iteration   2: 5.705 ops/us
+Iteration   3: 9.116 ops/us
+Iteration   4: 21.761 ops/us
+Iteration   5: 24.814 ops/us
+
+# Run progress: 47.22% complete, ETA 00:02:48
+# Fork: 2 of 2
+# Warmup Iteration   1: 19.965 ops/us
+# Warmup Iteration   2: 12.157 ops/us
+# Warmup Iteration   3: 4.056 ops/us
+Iteration   1: 6.429 ops/us
+Iteration   2: 5.951 ops/us
+Iteration   3: 20.849 ops/us
+Iteration   4: 21.604 ops/us
+Iteration   5: 24.320 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.mixed90_10":
+  14.544 ±(99.9%) 13.173 ops/us [Average]
+  (min, avg, max) = (4.887, 14.544, 24.814), stdev = 8.713
+  CI (99.9%): [1.370, 27.717] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.mixed90_10
+# Parameters: (capacityRatio = 0.1, impl = lru)
+
+# Run progress: 50.00% complete, ETA 00:02:40
+# Fork: 1 of 2
+# Warmup Iteration   1: 5.977 ops/us
+# Warmup Iteration   2: 12.065 ops/us
+# Warmup Iteration   3: 10.823 ops/us
+Iteration   1: 10.095 ops/us
+Iteration   2: 12.657 ops/us
+Iteration   3: 13.083 ops/us
+Iteration   4: 12.214 ops/us
+Iteration   5: 11.247 ops/us
+
+# Run progress: 52.78% complete, ETA 00:02:31
+# Fork: 2 of 2
+# Warmup Iteration   1: 8.384 ops/us
+# Warmup Iteration   2: 12.445 ops/us
+# Warmup Iteration   3: 12.183 ops/us
+Iteration   1: 11.714 ops/us
+Iteration   2: 12.607 ops/us
+Iteration   3: 11.308 ops/us
+Iteration   4: 12.536 ops/us
+Iteration   5: 12.575 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.mixed90_10":
+  12.004 ±(99.9%) 1.370 ops/us [Average]
+  (min, avg, max) = (10.095, 12.004, 13.083), stdev = 0.906
+  CI (99.9%): [10.633, 13.374] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.mixed90_10
+# Parameters: (capacityRatio = 0.1, impl = sharded)
+
+# Run progress: 55.56% complete, ETA 00:02:22
+# Fork: 1 of 2
+# Warmup Iteration   1: 6.726 ops/us
+# Warmup Iteration   2: 6.524 ops/us
+# Warmup Iteration   3: 10.214 ops/us
+Iteration   1: 10.850 ops/us
+Iteration   2: 7.896 ops/us
+Iteration   3: 9.760 ops/us
+Iteration   4: 13.648 ops/us
+Iteration   5: 13.972 ops/us
+
+# Run progress: 58.33% complete, ETA 00:02:13
+# Fork: 2 of 2
+# Warmup Iteration   1: 8.044 ops/us
+# Warmup Iteration   2: 13.723 ops/us
+# Warmup Iteration   3: 12.743 ops/us
+Iteration   1: 12.702 ops/us
+Iteration   2: 12.704 ops/us
+Iteration   3: 12.631 ops/us
+Iteration   4: 12.624 ops/us
+Iteration   5: 12.700 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.mixed90_10":
+  11.949 ±(99.9%) 2.852 ops/us [Average]
+  (min, avg, max) = (7.896, 11.949, 13.972), stdev = 1.886
+  CI (99.9%): [9.097, 14.801] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.mixed90_10
+# Parameters: (capacityRatio = 0.1, impl = baseline)
+
+# Run progress: 61.11% complete, ETA 00:02:04
+# Fork: 1 of 2
+# Warmup Iteration   1: 24.068 ops/us
+# Warmup Iteration   2: 28.873 ops/us
+# Warmup Iteration   3: 29.252 ops/us
+Iteration   1: 29.243 ops/us
+Iteration   2: 29.232 ops/us
+Iteration   3: 29.039 ops/us
+Iteration   4: 29.271 ops/us
+Iteration   5: 29.270 ops/us
+
+# Run progress: 63.89% complete, ETA 00:01:55
+# Fork: 2 of 2
+# Warmup Iteration   1: 23.797 ops/us
+# Warmup Iteration   2: 28.114 ops/us
+# Warmup Iteration   3: 29.325 ops/us
+Iteration   1: 29.795 ops/us
+Iteration   2: 29.691 ops/us
+Iteration   3: 29.723 ops/us
+Iteration   4: 29.678 ops/us
+Iteration   5: 29.763 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.mixed90_10":
+  29.470 ±(99.9%) 0.428 ops/us [Average]
+  (min, avg, max) = (29.039, 29.470, 29.795), stdev = 0.283
+  CI (99.9%): [29.042, 29.898] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.put
+# Parameters: (capacityRatio = 1.0, impl = lru)
+
+# Run progress: 66.67% complete, ETA 00:01:46
+# Fork: 1 of 2
+# Warmup Iteration   1: 7.861 ops/us
+# Warmup Iteration   2: 9.202 ops/us
+# Warmup Iteration   3: 8.667 ops/us
+Iteration   1: 7.531 ops/us
+Iteration   2: 7.556 ops/us
+Iteration   3: 7.529 ops/us
+Iteration   4: 7.552 ops/us
+Iteration   5: 7.536 ops/us
+
+# Run progress: 69.44% complete, ETA 00:01:37
+# Fork: 2 of 2
+# Warmup Iteration   1: 7.978 ops/us
+# Warmup Iteration   2: 9.746 ops/us
+# Warmup Iteration   3: 8.778 ops/us
+Iteration   1: 8.020 ops/us
+Iteration   2: 7.940 ops/us
+Iteration   3: 8.037 ops/us
+Iteration   4: 8.007 ops/us
+Iteration   5: 7.970 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.put":
+  7.768 ±(99.9%) 0.364 ops/us [Average]
+  (min, avg, max) = (7.529, 7.768, 8.037), stdev = 0.241
+  CI (99.9%): [7.404, 8.132] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.put
+# Parameters: (capacityRatio = 1.0, impl = sharded)
+
+# Run progress: 72.22% complete, ETA 00:01:28
+# Fork: 1 of 2
+# Warmup Iteration   1: 6.755 ops/us
+# Warmup Iteration   2: 9.054 ops/us
+# Warmup Iteration   3: 8.176 ops/us
+Iteration   1: 8.170 ops/us
+Iteration   2: 8.196 ops/us
+Iteration   3: 8.159 ops/us
+Iteration   4: 8.223 ops/us
+Iteration   5: 8.192 ops/us
+
+# Run progress: 75.00% complete, ETA 00:01:19
+# Fork: 2 of 2
+# Warmup Iteration   1: 7.699 ops/us
+# Warmup Iteration   2: 9.082 ops/us
+# Warmup Iteration   3: 9.242 ops/us
+Iteration   1: 9.109 ops/us
+Iteration   2: 8.963 ops/us
+Iteration   3: 9.122 ops/us
+Iteration   4: 9.145 ops/us
+Iteration   5: 9.168 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.put":
+  8.645 ±(99.9%) 0.733 ops/us [Average]
+  (min, avg, max) = (8.159, 8.645, 9.168), stdev = 0.485
+  CI (99.9%): [7.912, 9.377] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.put
+# Parameters: (capacityRatio = 1.0, impl = baseline)
+
+# Run progress: 77.78% complete, ETA 00:01:10
+# Fork: 1 of 2
+# Warmup Iteration   1: 13.145 ops/us
+# Warmup Iteration   2: 14.428 ops/us
+# Warmup Iteration   3: 14.343 ops/us
+Iteration   1: 14.428 ops/us
+Iteration   2: 14.318 ops/us
+Iteration   3: 14.428 ops/us
+Iteration   4: 14.374 ops/us
+Iteration   5: 14.396 ops/us
+
+# Run progress: 80.56% complete, ETA 00:01:02
+# Fork: 2 of 2
+# Warmup Iteration   1: 13.942 ops/us
+# Warmup Iteration   2: 15.070 ops/us
+# Warmup Iteration   3: 14.299 ops/us
+Iteration   1: 14.337 ops/us
+Iteration   2: 14.226 ops/us
+Iteration   3: 14.332 ops/us
+Iteration   4: 14.353 ops/us
+Iteration   5: 14.361 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.put":
+  14.355 ±(99.9%) 0.089 ops/us [Average]
+  (min, avg, max) = (14.226, 14.355, 14.428), stdev = 0.059
+  CI (99.9%): [14.266, 14.445] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.put
+# Parameters: (capacityRatio = 0.1, impl = lru)
+
+# Run progress: 83.33% complete, ETA 00:00:53
+# Fork: 1 of 2
+# Warmup Iteration   1: 6.979 ops/us
+# Warmup Iteration   2: 7.381 ops/us
+# Warmup Iteration   3: 7.444 ops/us
+Iteration   1: 7.374 ops/us
+Iteration   2: 7.383 ops/us
+Iteration   3: 7.442 ops/us
+Iteration   4: 7.467 ops/us
+Iteration   5: 7.378 ops/us
+
+# Run progress: 86.11% complete, ETA 00:00:44
+# Fork: 2 of 2
+# Warmup Iteration   1: 7.022 ops/us
+# Warmup Iteration   2: 7.414 ops/us
+# Warmup Iteration   3: 7.439 ops/us
+Iteration   1: 7.437 ops/us
+Iteration   2: 7.415 ops/us
+Iteration   3: 7.440 ops/us
+Iteration   4: 7.401 ops/us
+Iteration   5: 7.435 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.put":
+  7.417 ±(99.9%) 0.048 ops/us [Average]
+  (min, avg, max) = (7.374, 7.417, 7.467), stdev = 0.032
+  CI (99.9%): [7.369, 7.466] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.put
+# Parameters: (capacityRatio = 0.1, impl = sharded)
+
+# Run progress: 88.89% complete, ETA 00:00:35
+# Fork: 1 of 2
+# Warmup Iteration   1: 6.813 ops/us
+# Warmup Iteration   2: 7.770 ops/us
+# Warmup Iteration   3: 7.779 ops/us
+Iteration   1: 7.798 ops/us
+Iteration   2: 7.776 ops/us
+Iteration   3: 7.810 ops/us
+Iteration   4: 7.777 ops/us
+Iteration   5: 7.711 ops/us
+
+# Run progress: 91.67% complete, ETA 00:00:26
+# Fork: 2 of 2
+# Warmup Iteration   1: 6.855 ops/us
+# Warmup Iteration   2: 7.642 ops/us
+# Warmup Iteration   3: 7.652 ops/us
+Iteration   1: 7.681 ops/us
+Iteration   2: 7.622 ops/us
+Iteration   3: 7.666 ops/us
+Iteration   4: 7.615 ops/us
+Iteration   5: 7.368 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.put":
+  7.682 ±(99.9%) 0.199 ops/us [Average]
+  (min, avg, max) = (7.368, 7.682, 7.810), stdev = 0.132
+  CI (99.9%): [7.483, 7.881] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 23.0.1, Java HotSpot(TM) 64-Bit Server VM, 23.0.1+11-39
+# VM invoker: C:\Users\HP\Downloads\jdk-23_windows-x64_bin\jdk-23.0.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.distri.cache.bench.CacheBenchmark.put
+# Parameters: (capacityRatio = 0.1, impl = baseline)
+
+# Run progress: 94.44% complete, ETA 00:00:17
+# Fork: 1 of 2
+# Warmup Iteration   1: 10.979 ops/us
+# Warmup Iteration   2: 15.101 ops/us
+# Warmup Iteration   3: 11.662 ops/us
+Iteration   1: 11.657 ops/us
+Iteration   2: 11.700 ops/us
+Iteration   3: 11.670 ops/us
+Iteration   4: 11.705 ops/us
+Iteration   5: 9.176 ops/us
+
+# Run progress: 97.22% complete, ETA 00:00:08
+# Fork: 2 of 2
+# Warmup Iteration   1: 13.735 ops/us
+# Warmup Iteration   2: 14.879 ops/us
+# Warmup Iteration   3: 14.429 ops/us
+Iteration   1: 14.452 ops/us
+Iteration   2: 14.463 ops/us
+Iteration   3: 14.435 ops/us
+Iteration   4: 13.911 ops/us
+Iteration   5: 14.489 ops/us
+
+
+Result "com.distri.cache.bench.CacheBenchmark.put":
+  12.766 ±(99.9%) 2.777 ops/us [Average]
+  (min, avg, max) = (9.176, 12.766, 14.489), stdev = 1.837
+  CI (99.9%): [9.989, 15.543] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:05:18
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                  (capacityRatio)    (impl)   Mode  Cnt   Score    Error   Units
+CacheBenchmark.get                     1.0       lru  thrpt   10   5.557 ±  1.070  ops/us
+CacheBenchmark.get                     1.0   sharded  thrpt   10   6.480 ±  0.046  ops/us
+CacheBenchmark.get                     1.0  baseline  thrpt   10  41.759 ±  3.126  ops/us
+CacheBenchmark.get                     0.1       lru  thrpt   10  16.116 ±  0.559  ops/us
+CacheBenchmark.get                     0.1   sharded  thrpt   10  16.051 ±  0.392  ops/us
+CacheBenchmark.get                     0.1  baseline  thrpt   10  38.766 ±  6.214  ops/us
+CacheBenchmark.mixed90_10              1.0       lru  thrpt   10   6.062 ±  0.430  ops/us
+CacheBenchmark.mixed90_10              1.0   sharded  thrpt   10   5.250 ±  1.846  ops/us
+CacheBenchmark.mixed90_10              1.0  baseline  thrpt   10  14.544 ± 13.173  ops/us
+CacheBenchmark.mixed90_10              0.1       lru  thrpt   10  12.004 ±  1.370  ops/us
+CacheBenchmark.mixed90_10              0.1   sharded  thrpt   10  11.949 ±  2.852  ops/us
+CacheBenchmark.mixed90_10              0.1  baseline  thrpt   10  29.470 ±  0.428  ops/us
+CacheBenchmark.put                     1.0       lru  thrpt   10   7.768 ±  0.364  ops/us
+CacheBenchmark.put                     1.0   sharded  thrpt   10   8.645 ±  0.733  ops/us
+CacheBenchmark.put                     1.0  baseline  thrpt   10  14.355 ±  0.089  ops/us
+CacheBenchmark.put                     0.1       lru  thrpt   10   7.417 ±  0.048  ops/us
+CacheBenchmark.put                     0.1   sharded  thrpt   10   7.682 ±  0.199  ops/us
+CacheBenchmark.put                     0.1  baseline  thrpt   10  12.766 ±  2.777  ops/us
