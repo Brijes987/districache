@@ -1,14 +1,14 @@
 # DistriCache
 
-[![CI](https://github.com/Brijes987/DistriCache/actions/workflows/ci.yml/badge.svg)](https://github.com/Brijes987/DistriCache/actions/workflows/ci.yml)
+[![CI](https://github.com/Brijes987/districache/actions/workflows/ci.yml/badge.svg)](https://github.com/Brijes987/districache/actions/workflows/ci.yml)
 
 A thread-safe, in-memory LRU cache with per-entry TTL, written in Java 17 from first principles: a hash
 map plus a **hand-written doubly-linked list**, guarded by a `ReentrantReadWriteLock`.
 
-This is Phase 1 (a single node). Distribution is not built yet; see [Roadmap](#roadmap).
+Includes a Redis-protocol server, a Java client, and client-side consistent-hash routing across several independent servers. Servers do not talk to each other: there is no replication, failover or data migration (see [Known limitations](#known-limitations) and [Roadmap](#roadmap)).
 
 ## Features
-- `put`, `put` with TTL, `get`, `remove`, `size`, `capacity` (the `Cache` interface)
+- `put`, `put` with TTL, `get`, `remove`, `delete` (atomic, used by the server's `DEL`), `size`, `capacity`
 - Strict LRU eviction. Operations on entries without a TTL are O(1); any operation that adds, changes or removes a TTL entry is O(log n) because of the expiry index
 - TTL expiry in three ways: lazily on `get`, eagerly on `put`, and in the background
 - Expired entries never count against capacity and are always removed before a valid entry is evicted
