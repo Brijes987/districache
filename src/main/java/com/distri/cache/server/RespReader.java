@@ -20,6 +20,7 @@ final class RespReader {
 
     static final int MAX_ARGS = 1024;
     static final int MAX_BULK_BYTES = 1 << 20; // 1 MiB per argument
+    static final int MAX_COMMAND_BYTES = 8 << 20; // 8 MiB for all arguments of one command together
     static final int MAX_LINE_BYTES = 64 * 1024;
 
     private final BufferedInputStream in;
@@ -57,7 +58,8 @@ final class RespReader {
         if (count < 0 || count > MAX_ARGS) {
             throw new RespProtocolException("invalid multibulk length");
         }
-        List<byte[]> args = new ArrayList<>((int) count);
+        List<byte[]> args = new ArrayList<>((int) Math.min(count, 16));
+        long totalBytes = 0;
         for (int i = 0; i < count; i++) {
             int marker = in.read();
             if (marker == -1) {
@@ -69,6 +71,11 @@ final class RespReader {
             long len = parseLong(readLine(-1), "invalid bulk length");
             if (len < 0 || len > MAX_BULK_BYTES) {
                 throw new RespProtocolException("invalid bulk length");
+            }
+            totalBytes += len;
+            if (totalBytes > MAX_COMMAND_BYTES) {
+                // checked before reading the data, so a hostile client cannot make us buffer it
+                throw new RespProtocolException("command too large");
             }
             byte[] data = in.readNBytes((int) len);
             if (data.length < len) {

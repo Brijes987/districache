@@ -32,6 +32,9 @@ public final class CacheServer implements AutoCloseable {
     public static final String DEFAULT_HOST = "127.0.0.1";
     public static final int DEFAULT_MAX_CLIENTS = 128;
 
+    /** Largest key or value the server accepts, in UTF-8 bytes. */
+    public static final int MAX_ARGUMENT_BYTES = RespReader.MAX_BULK_BYTES;
+
     private static final System.Logger LOG = System.getLogger(CacheServer.class.getName());
 
     private final ShardedLRUCache<String, String> cache;

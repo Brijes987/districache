@@ -46,9 +46,9 @@ class CacheServerTest {
     @Test
     void ttlExpiresOverTheWire() throws Exception {
         try (CacheServer server = start(100, 4, 8); RespTestClient c = new RespTestClient(server.port())) {
-            c.call("SET", "k", "v", "PX", "50");
+            c.call("SET", "k", "v", "PX", "300");
             assertEquals("v", c.call("GET", "k").text());
-            Thread.sleep(150);
+            Thread.sleep(700);
             assertEquals(new RespTestClient.Reply('$', null), c.call("GET", "k"));
         }
     }

@@ -91,6 +91,30 @@ class RespReaderTest {
     }
 
     @Test
+    void rejectsACommandWhoseArgumentsAreTooLargeInTotal() {
+        // nine arguments of exactly the per-argument maximum: each is allowed, together they are not
+        int n = RespReader.MAX_COMMAND_BYTES / RespReader.MAX_BULK_BYTES + 1;
+        StringBuilder sb = new StringBuilder("*" + n + "\r\n");
+        String payload = "x".repeat(RespReader.MAX_BULK_BYTES);
+        for (int i = 0; i < n; i++) {
+            sb.append("$").append(RespReader.MAX_BULK_BYTES).append("\r\n").append(payload).append("\r\n");
+        }
+        RespProtocolException e = assertThrows(RespProtocolException.class, () -> reader(sb.toString()).readCommand());
+        assertTrue(e.getMessage().contains("too large"));
+    }
+
+    @Test
+    void acceptsACommandJustUnderTheTotalLimit() throws IOException {
+        int n = RespReader.MAX_COMMAND_BYTES / RespReader.MAX_BULK_BYTES;
+        StringBuilder sb = new StringBuilder("*" + n + "\r\n");
+        String payload = "x".repeat(RespReader.MAX_BULK_BYTES);
+        for (int i = 0; i < n; i++) {
+            sb.append("$").append(RespReader.MAX_BULK_BYTES).append("\r\n").append(payload).append("\r\n");
+        }
+        assertEquals(n, reader(sb.toString()).readCommand().size());
+    }
+
+    @Test
     void rejectsOverlongLine() {
         String line = "A".repeat(RespReader.MAX_LINE_BYTES + 10) + "\r\n";
         assertThrows(RespProtocolException.class, () -> reader(line).readCommand());

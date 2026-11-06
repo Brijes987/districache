@@ -1,5 +1,6 @@
 package com.distri.cache.client;
 
+import com.distri.cache.server.CacheServer;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -248,6 +249,13 @@ public final class CacheClient implements AutoCloseable {
     private static void requireText(String s, String what) {
         if (s == null) {
             throw new IllegalArgumentException(what + " cannot be null");
+        }
+        // The server rejects larger arguments by dropping the connection; say so clearly instead.
+        // Every UTF-8 character is at most 3 bytes per UTF-16 unit, so short strings skip the exact count.
+        if (s.length() > CacheServer.MAX_ARGUMENT_BYTES / 3
+                && s.getBytes(StandardCharsets.UTF_8).length > CacheServer.MAX_ARGUMENT_BYTES) {
+            throw new IllegalArgumentException(what + " is larger than the server limit of "
+                    + CacheServer.MAX_ARGUMENT_BYTES + " bytes");
         }
     }
 }

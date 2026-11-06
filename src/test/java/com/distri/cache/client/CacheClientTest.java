@@ -49,9 +49,9 @@ class CacheClientTest {
     @Test
     void ttlExpires() throws Exception {
         try (CacheServer server = startServer(100); CacheClient c = new CacheClient("127.0.0.1", server.port())) {
-            c.set("k", "v", 50);
+            c.set("k", "v", 300); // generous, so a slow machine cannot expire it before the first check
             assertEquals("v", c.get("k").orElseThrow());
-            Thread.sleep(150);
+            Thread.sleep(700);
             assertTrue(c.get("k").isEmpty());
         }
     }
@@ -62,6 +62,26 @@ class CacheClientTest {
             String big = "x".repeat(500_000);
             c.set("big", big);
             assertEquals(big, c.get("big").orElseThrow());
+        }
+    }
+
+    @Test
+    void oversizedArgumentIsRejectedBeforeAnythingIsSent() {
+        // no server is running on this port: the check must happen before any connection attempt
+        CacheClient c = new CacheClient("127.0.0.1", 6399, 200, 200);
+        String tooBig = "x".repeat(CacheServer.MAX_ARGUMENT_BYTES + 1);
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> c.set("k", tooBig));
+        assertTrue(e.getMessage().contains("limit"));
+        assertThrows(IllegalArgumentException.class, () -> c.get(tooBig));
+        c.close();
+    }
+
+    @Test
+    void argumentOfExactlyTheLimitIsAccepted() throws Exception {
+        try (CacheServer server = startServer(100); CacheClient c = new CacheClient("127.0.0.1", server.port())) {
+            String max = "y".repeat(CacheServer.MAX_ARGUMENT_BYTES);
+            c.set("k", max);
+            assertEquals(max, c.get("k").orElseThrow());
         }
     }
 

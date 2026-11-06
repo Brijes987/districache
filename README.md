@@ -92,6 +92,9 @@ Linearizability is **not** claimed, and these tests do not prove it.
   throughput was lower than single-thread throughput (see docs/BENCHMARKS.md).
 - `ShardedLRUCache` improves 4-thread throughput by 1.2x to 2.8x over the single-lock cache on the test machine
   (2 cores), but does not exceed its own single-thread speed there. See docs/BENCHMARKS.md.
+- Cleanup removes all expired entries under the write lock, so a large batch expiring at once briefly blocks writers
+  on that shard. The server uses one thread per connection and has no idle timeout; keys and values are limited to 1 MiB
+  each and 8 MiB per command.
 
 
 ## Roadmap

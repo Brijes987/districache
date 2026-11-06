@@ -19,9 +19,9 @@ class TTLTest {
     @Test
     void entryVisibleBeforeExpiryAndGoneAfter() {
         LRUCache<String, Integer> c = new LRUCache<>(5, 0);
-        c.put("k", 1, 60);
+        c.put("k", 1, 300); // generous, so a slow machine cannot expire it before the first check
         assertTrue(c.get("k").isPresent());
-        sleep(120);
+        sleep(700);
         assertTrue(c.get("k").isEmpty());
         assertEquals(0, c.physicalSize(), "lazy expiry must physically remove the entry");
     }

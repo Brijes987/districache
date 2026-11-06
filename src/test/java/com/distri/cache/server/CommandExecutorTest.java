@@ -65,9 +65,9 @@ class CommandExecutorTest {
 
     @Test
     void setWithExpiry() throws Exception {
-        assertEquals("+OK\r\n", run("SET", "k", "v", "PX", "40"));
+        assertEquals("+OK\r\n", run("SET", "k", "v", "PX", "300"));
         assertEquals("$1\r\nv\r\n", run("GET", "k"));
-        Thread.sleep(120);
+        Thread.sleep(700);
         assertEquals("$-1\r\n", run("GET", "k"));
         assertEquals("+OK\r\n", run("SET", "e", "v", "ex", "100"));
         assertEquals("$1\r\nv\r\n", run("GET", "e"));
@@ -114,9 +114,9 @@ class CommandExecutorTest {
     void dbsizeCountsValidKeys() throws Exception {
         assertEquals(":0\r\n", run("DBSIZE"));
         run("SET", "a", "1");
-        run("SET", "b", "2", "PX", "30");
+        run("SET", "b", "2", "PX", "300");
         assertEquals(":2\r\n", run("DBSIZE"));
-        Thread.sleep(100);
+        Thread.sleep(700);
         assertEquals(":1\r\n", run("DBSIZE"));
     }
 
