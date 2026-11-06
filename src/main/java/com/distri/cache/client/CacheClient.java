@@ -10,6 +10,8 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocket;
 
 /**
  * A blocking client for one cache server (Redis wire protocol, text keys and values in UTF-8).
@@ -32,6 +34,7 @@ public final class CacheClient implements AutoCloseable {
     private final int port;
     private final int connectTimeoutMillis;
     private final int readTimeoutMillis;
+    private final ClientSecurity security;
 
     private Socket socket;
     private InputStream in;
@@ -43,6 +46,18 @@ public final class CacheClient implements AutoCloseable {
     }
 
     public CacheClient(String host, int port, int connectTimeoutMillis, int readTimeoutMillis) {
+        this(host, port, connectTimeoutMillis, readTimeoutMillis, ClientSecurity.NONE);
+    }
+
+    /**
+     * With a password and/or TLS. The password is sent with AUTH every time a connection is (re)opened. With
+     * TLS the server's certificate is checked against the trust store and against {@code host}.
+     */
+    public CacheClient(String host, int port, int connectTimeoutMillis, int readTimeoutMillis,
+            ClientSecurity security) {
+        if (security == null) {
+            throw new IllegalArgumentException("security cannot be null (use ClientSecurity.NONE)");
+        }
         if (host == null || host.isEmpty()) {
             throw new IllegalArgumentException("host cannot be empty");
         }
@@ -56,6 +71,7 @@ public final class CacheClient implements AutoCloseable {
         this.port = port;
         this.connectTimeoutMillis = connectTimeoutMillis;
         this.readTimeoutMillis = readTimeoutMillis;
+        this.security = security;
     }
 
     /** Returns the value for {@code key}, or empty if it is missing or expired. */
@@ -149,10 +165,33 @@ public final class CacheClient implements AutoCloseable {
             s.connect(new InetSocketAddress(host, port), connectTimeoutMillis);
             s.setSoTimeout(readTimeoutMillis);
             s.setTcpNoDelay(true);
-            in = new BufferedInputStream(s.getInputStream());
-            out = s.getOutputStream();
+            if (security.tlsContext() != null) {
+                SSLSocket tls = (SSLSocket) security.tlsContext().getSocketFactory().createSocket(s, host, port, true);
+                s = tls; // closing it closes the underlying socket too
+                SSLParameters params = tls.getSSLParameters();
+                params.setEndpointIdentificationAlgorithm("HTTPS"); // the certificate must match the host name
+                params.setProtocols(new String[] {"TLSv1.3", "TLSv1.2"});
+                tls.setSSLParameters(params);
+                tls.startHandshake();
+            }
+            InputStream newIn = new BufferedInputStream(s.getInputStream());
+            OutputStream newOut = s.getOutputStream();
+            if (security.password() != null) {
+                newOut.write(encode("AUTH", security.password()));
+                newOut.flush();
+                in = newIn; // readReply reads from the field
+                try {
+                    readReply();
+                } catch (ServerError e) {
+                    throw new CacheClientException("authentication to " + host + ":" + port + " failed: " + e.getMessage());
+                }
+            }
+            in = newIn;
+            out = newOut;
             socket = s;
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
+            in = null;
+            out = null;
             try {
                 s.close();
             } catch (IOException ignored) {

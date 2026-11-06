@@ -10,7 +10,8 @@ import java.util.Locale;
  * Runs one parsed command against the cache and writes the reply.
  *
  * <p>Supported: PING [message], ECHO message, GET key, SET key value [EX seconds | PX millis],
- * DEL key [key ...], DBSIZE, QUIT, and REWRITEAOF when persistence is on. SET also accepts
+ * DEL key [key ...], DBSIZE, QUIT, AUTH, and REWRITEAOF when persistence is on. When a password is
+ * required, every command except AUTH and QUIT is refused with NOAUTH until the connection authenticates. SET also accepts
  * PXAT (absolute expiry in epoch milliseconds). Keys and values are UTF-8 text.
  *
  * <p>With a log, each write is applied and appended while holding the log's lock, so the log
@@ -22,20 +23,44 @@ final class CommandExecutor {
 
     private final ShardedLRUCache<String, String> cache;
     private final AppendOnlyLog log; // null when persistence is off
+    private final Authenticator authenticator; // null when no password is required
+    private boolean authenticated;
+    private int failedAttempts;
+
+    static final int MAX_FAILED_AUTH_ATTEMPTS = 5;
+    static final long FAILED_AUTH_DELAY_MILLIS = 250;
 
     CommandExecutor(ShardedLRUCache<String, String> cache) {
-        this(cache, null);
+        this(cache, null, null);
     }
 
     CommandExecutor(ShardedLRUCache<String, String> cache, AppendOnlyLog log) {
+        this(cache, log, null);
+    }
+
+    /** One executor serves one connection: it remembers whether that connection has authenticated. */
+    CommandExecutor(ShardedLRUCache<String, String> cache, AppendOnlyLog log, Authenticator authenticator) {
         this.cache = cache;
         this.log = log;
+        this.authenticator = authenticator;
+        this.authenticated = authenticator == null;
+    }
+
+    boolean isAuthenticated() {
+        return authenticated;
     }
 
     Result execute(List<byte[]> args, RespWriter out) throws IOException {
         String name = text(args.get(0));
         String command = name.toUpperCase(Locale.ROOT);
         int argc = args.size();
+        if (command.equals("AUTH")) {
+            return auth(args, out);
+        }
+        if (!authenticated && !command.equals("QUIT")) {
+            out.error("NOAUTH Authentication required.");
+            return Result.CONTINUE;
+        }
         switch (command) {
             case "PING" -> {
                 if (argc == 1) {
@@ -104,6 +129,41 @@ final class CommandExecutor {
             default -> out.error("ERR unknown command '" + sanitize(name) + "'");
         }
         return Result.CONTINUE;
+    }
+
+    /** AUTH password, or AUTH default password (the user name is accepted for client compatibility). */
+    private Result auth(List<byte[]> args, RespWriter out) throws IOException {
+        int argc = args.size();
+        if (argc != 2 && argc != 3) {
+            arity(out, "AUTH");
+            return Result.CONTINUE;
+        }
+        if (authenticator == null) {
+            out.error("ERR AUTH called without any password configured");
+            return Result.CONTINUE;
+        }
+        if (argc == 3 && !text(args.get(1)).equals("default")) {
+            return authFailed(out);
+        }
+        if (authenticator.matches(args.get(argc - 1))) {
+            authenticated = true;
+            failedAttempts = 0;
+            out.simple("OK");
+            return Result.CONTINUE;
+        }
+        return authFailed(out);
+    }
+
+    /** A fixed delay slows guessing on one connection; too many failures close it. There is no global rate limit. */
+    private Result authFailed(RespWriter out) throws IOException {
+        failedAttempts++;
+        try {
+            Thread.sleep(FAILED_AUTH_DELAY_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        out.error("WRONGPASS invalid password");
+        return failedAttempts >= MAX_FAILED_AUTH_ATTEMPTS ? Result.CLOSE : Result.CONTINUE;
     }
 
     private void set(List<byte[]> args, RespWriter out) throws IOException {

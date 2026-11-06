@@ -23,6 +23,7 @@ public final class ClusterClient implements AutoCloseable {
     private final ConcurrentHashMap<String, CacheClient> clients = new ConcurrentHashMap<>();
     private final int connectTimeoutMillis;
     private final int readTimeoutMillis;
+    private final ClientSecurity security;
     private volatile boolean closed;
 
     public ClusterClient(Collection<String> nodes) {
@@ -31,6 +32,16 @@ public final class ClusterClient implements AutoCloseable {
     }
 
     public ClusterClient(Collection<String> nodes, int virtualNodes, int connectTimeoutMillis, int readTimeoutMillis) {
+        this(nodes, virtualNodes, connectTimeoutMillis, readTimeoutMillis, ClientSecurity.NONE);
+    }
+
+    /** Every server must use the same password and TLS trust settings. */
+    public ClusterClient(Collection<String> nodes, int virtualNodes, int connectTimeoutMillis, int readTimeoutMillis,
+            ClientSecurity security) {
+        if (security == null) {
+            throw new IllegalArgumentException("security cannot be null (use ClientSecurity.NONE)");
+        }
+        this.security = security;
         if (nodes == null || nodes.isEmpty()) {
             throw new IllegalArgumentException("at least one node is required");
         }
@@ -81,7 +92,7 @@ public final class ClusterClient implements AutoCloseable {
         parse(address); // validates the format before anything changes
         clients.computeIfAbsent(address, a -> {
             HostPort hp = parse(a);
-            return new CacheClient(hp.host, hp.port, connectTimeoutMillis, readTimeoutMillis);
+            return new CacheClient(hp.host, hp.port, connectTimeoutMillis, readTimeoutMillis, security);
         });
         ring.add(address);
     }
@@ -142,6 +153,12 @@ public final class ClusterClient implements AutoCloseable {
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("node address must look like host:port, got '" + address + "'");
         }
+    }
+
+    /** As {@link #of(String...)}, with a password and/or TLS used for every server. */
+    public static ClusterClient of(ClientSecurity security, String... nodes) {
+        return new ClusterClient(List.of(nodes), ConsistentHashRing.DEFAULT_VIRTUAL_NODES,
+                CacheClient.DEFAULT_CONNECT_TIMEOUT_MILLIS, CacheClient.DEFAULT_READ_TIMEOUT_MILLIS, security);
     }
 
     /** Convenience for tests and demos. */

@@ -6,6 +6,9 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLSocket;
 import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -44,6 +47,8 @@ public final class CacheServer implements AutoCloseable {
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
 
     private final AppendOnlyLog log;
+    private final Authenticator authenticator; // null: no password
+    private final SSLContext tls; // null: plain TCP
 
     private ServerSocket serverSocket;
     private ExecutorService pool;
@@ -59,22 +64,69 @@ public final class CacheServer implements AutoCloseable {
      * @param maxClients maximum simultaneous connections
      */
     public CacheServer(ShardedLRUCache<String, String> cache, String host, int port, int maxClients) {
-        this(cache, host, port, maxClients, null);
+        this(cache, host, port, maxClients, null, Security.NONE);
+    }
+
+    /** As above, with a password and/or TLS. */
+    public CacheServer(ShardedLRUCache<String, String> cache, String host, int port, int maxClients,
+            Security security) {
+        this(cache, host, port, maxClients, null, security);
     }
 
     /** As above, with persistence: every write is also appended to {@code log}. The caller closes the log. */
     CacheServer(ShardedLRUCache<String, String> cache, String host, int port, int maxClients, AppendOnlyLog log) {
+        this(cache, host, port, maxClients, log, Security.NONE);
+    }
+
+    CacheServer(ShardedLRUCache<String, String> cache, String host, int port, int maxClients, AppendOnlyLog log,
+            Security security) {
         if (cache == null) {
             throw new IllegalArgumentException("cache cannot be null");
         }
         if (maxClients <= 0) {
             throw new IllegalArgumentException("maxClients must be positive");
         }
+        if (security == null) {
+            throw new IllegalArgumentException("security cannot be null (use Security.NONE)");
+        }
         this.cache = cache;
         this.log = log;
+        this.authenticator = security.password() == null ? null : new Authenticator(security.password());
+        this.tls = security.tlsContext();
         this.host = host;
         this.requestedPort = port;
         this.clientSlots = new Semaphore(maxClients);
+    }
+
+    /**
+     * Optional protection for connections.
+     *
+     * @param password one shared password clients must send with {@code AUTH} before any other command, or null
+     * @param tlsContext if not null, connections use TLS with this context's certificate
+     */
+    public record Security(String password, SSLContext tlsContext) {
+        public static final Security NONE = new Security(null, null);
+
+        public Security {
+            if (password != null && password.isEmpty()) {
+                throw new IllegalArgumentException("password cannot be empty");
+            }
+        }
+
+        @Override
+        public String toString() { // never print the password
+            return "Security[password=" + (password == null ? "none" : "set") + ", tls=" + (tlsContext != null) + "]";
+        }
+    }
+
+    /** How long a client may take to finish the TLS handshake, and to send AUTH when a password is required. */
+    static final int PRE_AUTH_TIMEOUT_MILLIS = 10_000;
+
+    private volatile int preAuthTimeoutMillis = PRE_AUTH_TIMEOUT_MILLIS;
+
+    /** For tests: shorten the pre-authentication timeout. Call before {@link #start()}. */
+    void setPreAuthTimeoutMillis(int millis) {
+        this.preAuthTimeoutMillis = millis;
     }
 
     /** Binds the socket and starts accepting connections. */
@@ -82,7 +134,13 @@ public final class CacheServer implements AutoCloseable {
         if (running) {
             throw new IllegalStateException("already started");
         }
-        serverSocket = new ServerSocket();
+        if (tls != null) {
+            SSLServerSocket tlsSocket = (SSLServerSocket) tls.getServerSocketFactory().createServerSocket();
+            tlsSocket.setEnabledProtocols(Tls.PROTOCOLS);
+            serverSocket = tlsSocket;
+        } else {
+            serverSocket = new ServerSocket();
+        }
         serverSocket.setReuseAddress(true);
         serverSocket.bind(new InetSocketAddress(host, requestedPort));
         AtomicInteger counter = new AtomicInteger();
@@ -131,6 +189,10 @@ public final class CacheServer implements AutoCloseable {
     }
 
     private void reject(Socket socket) {
+        if (socket instanceof SSLSocket) {
+            closeQuietly(socket); // no TLS handshake on the accept thread just to deliver an error
+            return;
+        }
         try (socket) {
             socket.getOutputStream().write(
                     "-ERR max number of clients reached\r\n".getBytes(StandardCharsets.US_ASCII));
@@ -143,9 +205,20 @@ public final class CacheServer implements AutoCloseable {
     private void serve(Socket socket) {
         try (socket) {
             socket.setTcpNoDelay(true);
+            if (tls != null || authenticator != null) {
+                // A client that never finishes the handshake or never authenticates must not hold a slot forever.
+                socket.setSoTimeout(preAuthTimeoutMillis);
+            }
+            if (socket instanceof SSLSocket tlsConnection) {
+                tlsConnection.startHandshake();
+            }
             RespReader reader = new RespReader(socket.getInputStream());
             RespWriter writer = new RespWriter(socket.getOutputStream());
-            CommandExecutor executor = new CommandExecutor(cache, log);
+            CommandExecutor executor = new CommandExecutor(cache, log, authenticator);
+            boolean preAuthLimit = !executor.isAuthenticated() && authenticator != null;
+            if (!preAuthLimit) {
+                socket.setSoTimeout(0);
+            }
             while (true) {
                 List<byte[]> command;
                 try {
@@ -169,6 +242,10 @@ public final class CacheServer implements AutoCloseable {
                     writer.error("ERR internal error");
                     result = CommandExecutor.Result.CONTINUE;
                 }
+                if (preAuthLimit && executor.isAuthenticated()) {
+                    preAuthLimit = false;
+                    socket.setSoTimeout(0); // authenticated: no more pre-auth limit (there is still no idle timeout)
+                }
                 if (result == CommandExecutor.Result.CLOSE || !reader.hasBufferedInput()) {
                     writer.flush();
                 }
@@ -176,8 +253,11 @@ public final class CacheServer implements AutoCloseable {
                     return;
                 }
             }
-        } catch (EOFException | SocketException e) {
-            // client went away mid-command, or the server is shutting down
+        } catch (EOFException | SocketException | java.net.SocketTimeoutException e) {
+            // client went away mid-command, timed out before authenticating, or the server is shutting down
+        } catch (javax.net.ssl.SSLException e) {
+            // failed handshake (a plain-text client, a scanner, a wrong certificate): not worth a warning each time
+            LOG.log(System.Logger.Level.DEBUG, "TLS failure: " + e.getMessage());
         } catch (IOException e) {
             if (running) {
                 LOG.log(System.Logger.Level.WARNING, "connection error", e);
