@@ -10,16 +10,26 @@ import java.util.Locale;
  * Runs one parsed command against the cache and writes the reply.
  *
  * <p>Supported: PING [message], ECHO message, GET key, SET key value [EX seconds | PX millis],
- * DEL key [key ...], DBSIZE, QUIT. Keys and values are UTF-8 text.
+ * DEL key [key ...], DBSIZE, QUIT, and REWRITEAOF when persistence is on. SET also accepts
+ * PXAT (absolute expiry in epoch milliseconds). Keys and values are UTF-8 text.
+ *
+ * <p>With a log, each write is applied and appended while holding the log's lock, so the log
+ * order is the order the writes took effect.
  */
 final class CommandExecutor {
 
     enum Result { CONTINUE, CLOSE }
 
     private final ShardedLRUCache<String, String> cache;
+    private final AppendOnlyLog log; // null when persistence is off
 
     CommandExecutor(ShardedLRUCache<String, String> cache) {
+        this(cache, null);
+    }
+
+    CommandExecutor(ShardedLRUCache<String, String> cache, AppendOnlyLog log) {
         this.cache = cache;
+        this.log = log;
     }
 
     Result execute(List<byte[]> args, RespWriter out) throws IOException {
@@ -60,13 +70,24 @@ final class CommandExecutor {
                 if (argc < 2) {
                     arity(out, command);
                 } else {
-                    long removed = 0;
-                    for (int i = 1; i < argc; i++) {
-                        if (cache.delete(text(args.get(i)))) {
-                            removed++;
-                        }
+                    del(args, out);
+                }
+            }
+            case "REWRITEAOF" -> {
+                if (argc != 1) {
+                    arity(out, command);
+                } else if (log == null) {
+                    out.error("ERR persistence is not enabled");
+                } else {
+                    log.lock();
+                    try {
+                        log.compact(cache);
+                        out.simple("OK");
+                    } catch (IOException e) {
+                        out.error("ERR rewrite failed: " + sanitize(String.valueOf(e.getMessage())));
+                    } finally {
+                        log.unlock();
                     }
-                    out.integer(removed);
                 }
             }
             case "DBSIZE" -> {
@@ -98,12 +119,11 @@ final class CommandExecutor {
         String key = text(args.get(1));
         String value = text(args.get(2));
         if (argc == 3) {
-            cache.put(key, value);
-            out.simple("OK");
+            applySet(key, value, -1, out);
             return;
         }
         String option = text(args.get(3)).toUpperCase(Locale.ROOT);
-        if (!option.equals("EX") && !option.equals("PX")) {
+        if (!option.equals("EX") && !option.equals("PX") && !option.equals("PXAT")) {
             out.error("ERR syntax error");
             return;
         }
@@ -114,22 +134,97 @@ final class CommandExecutor {
             out.error("ERR value is not an integer or out of range");
             return;
         }
-        long ttlMillis;
-        if (option.equals("EX")) {
-            if (amount > Long.MAX_VALUE / 1000) {
+        long now = System.currentTimeMillis();
+        long expiresAt;
+        if (option.equals("PXAT")) {
+            if (amount <= 0) {
                 out.error("ERR invalid expire time in 'set' command");
                 return;
             }
-            ttlMillis = amount * 1000;
+            expiresAt = amount;
         } else {
-            ttlMillis = amount;
+            long ttlMillis;
+            if (option.equals("EX")) {
+                if (amount > Long.MAX_VALUE / 1000) {
+                    out.error("ERR invalid expire time in 'set' command");
+                    return;
+                }
+                ttlMillis = amount * 1000;
+            } else {
+                ttlMillis = amount;
+            }
+            if (ttlMillis <= 0) {
+                out.error("ERR invalid expire time in 'set' command");
+                return;
+            }
+            expiresAt = ttlMillis > Long.MAX_VALUE - now ? Long.MAX_VALUE : now + ttlMillis;
         }
-        if (ttlMillis <= 0) {
-            out.error("ERR invalid expire time in 'set' command");
-            return;
+        applySet(key, value, expiresAt, out);
+    }
+
+    /** SET without a TTL. */
+    private void applySet(String key, String value, long expiresAt, RespWriter out) throws IOException {
+        if (log != null) {
+            log.lock();
         }
-        cache.put(key, value, ttlMillis);
-        out.simple("OK");
+        try {
+            long ttl = expiresAt > 0 ? expiresAt - System.currentTimeMillis() : -1;
+            if (expiresAt > 0 && ttl <= 0) {
+                cache.delete(key); // expiry already in the past: the key ends up absent
+            } else if (expiresAt > 0) {
+                cache.put(key, value, ttl);
+            } else {
+                cache.put(key, value);
+            }
+            if (log != null) {
+                if (expiresAt > 0) {
+                    log.append("SET", key, value, "PXAT", Long.toString(expiresAt));
+                } else {
+                    log.append("SET", key, value);
+                }
+                log.maybeCompact(cache);
+            }
+            out.simple("OK");
+        } catch (IOException e) {
+            out.error("ERR write to the append-only log failed: " + sanitize(String.valueOf(e.getMessage())));
+        } finally {
+            if (log != null) {
+                log.unlock();
+            }
+        }
+    }
+
+    private void del(List<byte[]> args, RespWriter out) throws IOException {
+        if (log != null) {
+            log.lock();
+        }
+        try {
+            long removed = 0;
+            java.util.ArrayList<String> removedKeys = new java.util.ArrayList<>();
+            for (int i = 1; i < args.size(); i++) {
+                String key = text(args.get(i));
+                if (cache.delete(key)) {
+                    removed++;
+                    removedKeys.add(key);
+                }
+            }
+            if (log != null && !removedKeys.isEmpty()) {
+                String[] record = new String[removedKeys.size() + 1];
+                record[0] = "DEL";
+                for (int i = 0; i < removedKeys.size(); i++) {
+                    record[i + 1] = removedKeys.get(i);
+                }
+                log.append(record);
+                log.maybeCompact(cache);
+            }
+            out.integer(removed);
+        } catch (IOException e) {
+            out.error("ERR write to the append-only log failed: " + sanitize(String.valueOf(e.getMessage())));
+        } finally {
+            if (log != null) {
+                log.unlock();
+            }
+        }
     }
 
     private static void arity(RespWriter out, String command) throws IOException {

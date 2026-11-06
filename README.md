@@ -14,6 +14,7 @@ Includes a Redis-protocol server, a Java client, and client-side consistent-hash
 - Expired entries never count against capacity and are always removed before a valid entry is evicted
 - `BaselineCache` (a `ConcurrentHashMap` wrapper) for benchmark comparison
 - `ShardedLRUCache`: 16 independently locked shards for less lock contention; eviction order is per shard, not global
+- Optional persistence: an append-only log with replay on startup, three fsync policies and compaction (see [docs/PERSISTENCE.md](docs/PERSISTENCE.md))
 
 ## Usage
 ```java
@@ -95,8 +96,9 @@ Linearizability is **not** claimed, and these tests do not prove it.
 - Cleanup removes all expired entries under the write lock, so a large batch expiring at once briefly blocks writers
   on that shard. The server uses one thread per connection and has no idle timeout; keys and values are limited to 1 MiB
   each and 8 MiB per command.
+- Persistence is a single append-only log. It has no checksums, serialises writes while on, and does not log evictions. Details in docs/PERSISTENCE.md.
 
 
 ## Roadmap
 - Done: Redis-protocol server, Java client, consistent-hash routing over several servers
-- Not planned yet: replication, failover, data migration on membership changes, persistence, authentication
+- Not planned yet: replication, failover, data migration on membership changes, authentication

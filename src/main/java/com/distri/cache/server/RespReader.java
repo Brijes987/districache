@@ -23,10 +23,42 @@ final class RespReader {
     static final int MAX_COMMAND_BYTES = 8 << 20; // 8 MiB for all arguments of one command together
     static final int MAX_LINE_BYTES = 64 * 1024;
 
-    private final BufferedInputStream in;
+    private final CountingStream in;
 
     RespReader(InputStream in) {
-        this.in = new BufferedInputStream(in, 8192);
+        this.in = new CountingStream(new BufferedInputStream(in, 8192));
+    }
+
+    /** Number of bytes consumed so far (not counting bytes only buffered). Used to find the end of the last whole log record. */
+    long position() {
+        return in.count;
+    }
+
+    /** Counts the bytes handed to the parser, as opposed to bytes the buffer has read ahead. */
+    private static final class CountingStream extends java.io.FilterInputStream {
+        long count;
+
+        CountingStream(InputStream in) {
+            super(in);
+        }
+
+        @Override
+        public int read() throws IOException {
+            int b = super.read();
+            if (b != -1) {
+                count++;
+            }
+            return b;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            int n = super.read(b, off, len);
+            if (n > 0) {
+                count += n;
+            }
+            return n;
+        }
     }
 
     /**
@@ -81,7 +113,12 @@ final class RespReader {
             if (data.length < len) {
                 throw new EOFException("connection closed inside a command");
             }
-            if (in.read() != '\r' || in.read() != '\n') {
+            int cr = in.read();
+            int lf = cr == -1 ? -1 : in.read();
+            if (cr == -1 || lf == -1) {
+                throw new EOFException("connection closed inside a command");
+            }
+            if (cr != '\r' || lf != '\n') {
                 throw new RespProtocolException("bulk string not terminated by CRLF");
             }
             args.add(data);

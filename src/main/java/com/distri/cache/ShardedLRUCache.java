@@ -127,6 +127,19 @@ public final class ShardedLRUCache<K, V> implements Cache<K, V>, AutoCloseable {
         return total;
     }
 
+    /**
+     * Copies every live entry, shard by shard, each shard from least to most recently used.
+     * The result is not a single point-in-time view of the whole cache: shards are copied one
+     * after another while other threads may still be writing.
+     */
+    public java.util.List<CacheSnapshotEntry<K, V>> snapshot() {
+        java.util.ArrayList<CacheSnapshotEntry<K, V>> out = new java.util.ArrayList<>();
+        for (LRUCache<K, V> shard : shards) {
+            out.addAll(shard.snapshotLruToMru());
+        }
+        return out;
+    }
+
     /** Checks every shard's internal invariants; a diagnostic hook for tests. */
     public void verifyInternalConsistency() {
         for (LRUCache<K, V> shard : shards) {

@@ -43,6 +43,8 @@ public final class CacheServer implements AutoCloseable {
     private final Semaphore clientSlots;
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
 
+    private final AppendOnlyLog log;
+
     private ServerSocket serverSocket;
     private ExecutorService pool;
     private Thread acceptThread;
@@ -57,6 +59,11 @@ public final class CacheServer implements AutoCloseable {
      * @param maxClients maximum simultaneous connections
      */
     public CacheServer(ShardedLRUCache<String, String> cache, String host, int port, int maxClients) {
+        this(cache, host, port, maxClients, null);
+    }
+
+    /** As above, with persistence: every write is also appended to {@code log}. The caller closes the log. */
+    CacheServer(ShardedLRUCache<String, String> cache, String host, int port, int maxClients, AppendOnlyLog log) {
         if (cache == null) {
             throw new IllegalArgumentException("cache cannot be null");
         }
@@ -64,6 +71,7 @@ public final class CacheServer implements AutoCloseable {
             throw new IllegalArgumentException("maxClients must be positive");
         }
         this.cache = cache;
+        this.log = log;
         this.host = host;
         this.requestedPort = port;
         this.clientSlots = new Semaphore(maxClients);
@@ -137,7 +145,7 @@ public final class CacheServer implements AutoCloseable {
             socket.setTcpNoDelay(true);
             RespReader reader = new RespReader(socket.getInputStream());
             RespWriter writer = new RespWriter(socket.getOutputStream());
-            CommandExecutor executor = new CommandExecutor(cache);
+            CommandExecutor executor = new CommandExecutor(cache, log);
             while (true) {
                 List<byte[]> command;
                 try {

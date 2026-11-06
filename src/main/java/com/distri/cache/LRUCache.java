@@ -312,6 +312,27 @@ public final class LRUCache<K, V> implements Cache<K, V>, AutoCloseable {
     }
 
     /**
+     * Copies every live (non-expired) entry, ordered from least to most recently used. Replaying
+     * the entries in this order into an empty cache reproduces the same relative LRU order.
+     * O(n); holds the read lock while copying, so writers on this cache wait.
+     */
+    public java.util.List<CacheSnapshotEntry<K, V>> snapshotLruToMru() {
+        long now = System.currentTimeMillis();
+        lock.readLock().lock();
+        try {
+            java.util.ArrayList<CacheSnapshotEntry<K, V>> out = new java.util.ArrayList<>(cacheMap.size());
+            for (CacheEntry<K, V> node = tail.prev; node != head; node = node.prev) {
+                if (!node.isExpired(now)) {
+                    out.add(new CacheSnapshotEntry<>(node.key, node.value, node.expiryTime));
+                }
+            }
+            return out;
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    /**
      * Walks the whole structure and checks its invariants. O(n); a diagnostic hook for tests.
      *
      * @throws IllegalStateException describing the first violated invariant
