@@ -5,3 +5,4 @@ patch_backup/
 .idea/
 *.iml
 *.log
+dependency-reduced-pom.xml
