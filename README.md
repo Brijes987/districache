@@ -31,6 +31,25 @@ The cache can be served over TCP using a subset of the Redis wire protocol, so o
 Supported commands: `PING`, `ECHO`, `GET`, `SET key value [EX seconds | PX millis]`, `DEL`, `DBSIZE`, `QUIT`.
 Keys and values are UTF-8 text.
 
+## Client and multi-server routing
+`CacheClient` talks to one server (get, set with optional TTL, delete, dbSize, ping) and reconnects after a failure.
+`ClusterClient` spreads keys over several servers with a consistent-hash ring (160 virtual nodes per server), so the
+same key always goes to the same server.
+
+```java
+try (ClusterClient cluster = ClusterClient.of("10.0.0.1:6380", "10.0.0.2:6380", "10.0.0.3:6380")) {
+    cluster.set("user:1", "Asha");
+    Optional<String> v = cluster.get("user:1");
+}
+```
+
+`java -cp target/classes com.distri.cache.client.RingDemo` shows the ring in action. With 100,000 keys over 5 servers,
+adding a sixth moved 16.4% of the keys (ideal 16.7%), and none moved between the existing servers. The same change
+with `hash % n` moved 95.6% of the keys in that test.
+
+What it does **not** do: it does not copy data when a server joins or leaves (moved keys simply miss), it does not
+replicate, and it does not fail over: a request routed to a dead server throws `CacheClientException`.
+
 ```bash
 mvn -DskipTests package
 java -cp target/cache-1.0-SNAPSHOT.jar com.distri.cache.server.ServerMain --port 6380 --capacity 100000
@@ -74,7 +93,7 @@ Linearizability is **not** claimed, and these tests do not prove it.
 - `ShardedLRUCache` improves 4-thread throughput by 1.2x to 2.8x over the single-lock cache on the test machine
   (2 cores), but does not exceed its own single-thread speed there. See docs/BENCHMARKS.md.
 
+
 ## Roadmap
-- Done: Redis-protocol server
-- Next: Java client library, then consistent hashing across several server instances
-- Not planned yet: replication, persistence, authentication
+- Done: Redis-protocol server, Java client, consistent-hash routing over several servers
+- Not planned yet: replication, failover, data migration on membership changes, persistence, authentication
