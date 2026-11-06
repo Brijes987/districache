@@ -10,7 +10,7 @@
     <packaging>jar</packaging>
 
     <name>DistriCache</name>
-    <description>In-Memory Cache with LRU Eviction and TTL Support</description>
+    <description>In-memory LRU cache with TTL, a sharded variant, a Redis-protocol server, a client and consistent-hash routing</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -18,26 +18,10 @@
         <maven.compiler.target>17</maven.compiler.target>
         <junit.version>5.10.1</junit.version>
         <jqwik.version>1.8.5</jqwik.version>
-        <slf4j.version>2.0.9</slf4j.version>
-        <logback.version>1.4.14</logback.version>
     </properties>
 
+    <!-- The library itself has no runtime dependencies. -->
     <dependencies>
-        <!-- SLF4J API for logging -->
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>${slf4j.version}</version>
-        </dependency>
-
-        <!-- Logback as SLF4J implementation -->
-        <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-classic</artifactId>
-            <version>${logback.version}</version>
-        </dependency>
-
-        <!-- JUnit 5 -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -45,7 +29,7 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- jqwik for property-based testing (JUnit 5 native) -->
+        <!-- jqwik: property-based testing on the JUnit 5 platform -->
         <dependency>
             <groupId>net.jqwik</groupId>
             <artifactId>jqwik</artifactId>
@@ -65,7 +49,7 @@
                     <target>17</target>
                 </configuration>
             </plugin>
-            
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
