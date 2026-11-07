@@ -14,36 +14,45 @@ import java.util.Locale;
  * required, every command except AUTH and QUIT is refused with NOAUTH until the connection authenticates. SET also accepts
  * PXAT (absolute expiry in epoch milliseconds). Keys and values are UTF-8 text.
  *
- * <p>With a log, each write is applied and appended while holding the log's lock, so the log
+ * <p>With persistence or replication on, each write is applied and recorded while holding the write coordinator's lock, so the log
  * order is the order the writes took effect.
  */
 final class CommandExecutor {
 
-    enum Result { CONTINUE, CLOSE }
+    enum Result { CONTINUE, CLOSE, REPLICATE }
 
     private final ShardedLRUCache<String, String> cache;
-    private final AppendOnlyLog log; // null when persistence is off
-    private final Authenticator authenticator; // null when no password is required
+    private final WriteCoordinator coordinator; // null when neither persistence nor replication is on
+    private final Replication replication;       // null when replication is not enabled
+    private final Authenticator authenticator;   // null when no password is required
     private boolean authenticated;
     private int failedAttempts;
+    private String[] pendingPsync;               // set when the connection is about to become a replica link
 
     static final int MAX_FAILED_AUTH_ATTEMPTS = 5;
     static final long FAILED_AUTH_DELAY_MILLIS = 250;
 
     CommandExecutor(ShardedLRUCache<String, String> cache) {
-        this(cache, null, null);
+        this(cache, (WriteCoordinator) null, null, null);
     }
 
     CommandExecutor(ShardedLRUCache<String, String> cache, AppendOnlyLog log) {
-        this(cache, log, null);
+        this(cache, log == null ? null : new WriteCoordinator(cache, log, null), null, null);
     }
 
     /** One executor serves one connection: it remembers whether that connection has authenticated. */
-    CommandExecutor(ShardedLRUCache<String, String> cache, AppendOnlyLog log, Authenticator authenticator) {
+    CommandExecutor(ShardedLRUCache<String, String> cache, WriteCoordinator coordinator, Authenticator authenticator,
+            Replication replication) {
         this.cache = cache;
-        this.log = log;
+        this.coordinator = coordinator;
         this.authenticator = authenticator;
+        this.replication = replication;
         this.authenticated = authenticator == null;
+    }
+
+    /** After {@link Result#REPLICATE}: the PSYNC arguments (replication id, offset). */
+    String[] pendingPsync() {
+        return pendingPsync;
     }
 
     boolean isAuthenticated() {
@@ -90,28 +99,44 @@ final class CommandExecutor {
                     }
                 }
             }
-            case "SET" -> set(args, out);
+            case "SET" -> {
+                if (readOnly(out)) {
+                    return Result.CONTINUE;
+                }
+                set(args, out);
+            }
+            case "PSYNC" -> {
+                return psync(args, out);
+            }
+            case "REPLCONF" -> out.error("ERR REPLCONF is only valid on a replication connection");
+            case "REPLICAOF" -> replicaOf(args, out);
+            case "REPLINFO" -> {
+                if (argc != 1) {
+                    arity(out, command);
+                } else if (replication == null) {
+                    out.bulk("role:primary\nreplication:disabled\n".getBytes(StandardCharsets.UTF_8));
+                } else {
+                    out.bulk(replication.info().getBytes(StandardCharsets.UTF_8));
+                }
+            }
             case "DEL" -> {
                 if (argc < 2) {
                     arity(out, command);
-                } else {
+                } else if (!readOnly(out)) {
                     del(args, out);
                 }
             }
             case "REWRITEAOF" -> {
                 if (argc != 1) {
                     arity(out, command);
-                } else if (log == null) {
+                } else if (coordinator == null || !coordinator.hasLog()) {
                     out.error("ERR persistence is not enabled");
                 } else {
-                    log.lock();
                     try {
-                        log.compact(cache);
+                        coordinator.compactNow();
                         out.simple("OK");
                     } catch (IOException e) {
                         out.error("ERR rewrite failed: " + sanitize(String.valueOf(e.getMessage())));
-                    } finally {
-                        log.unlock();
                     }
                 }
             }
@@ -224,8 +249,8 @@ final class CommandExecutor {
 
     /** SET without a TTL. */
     private void applySet(String key, String value, long expiresAt, RespWriter out) throws IOException {
-        if (log != null) {
-            log.lock();
+        if (coordinator != null) {
+            coordinator.lock();
         }
         try {
             long ttl = expiresAt > 0 ? expiresAt - System.currentTimeMillis() : -1;
@@ -236,27 +261,26 @@ final class CommandExecutor {
             } else {
                 cache.put(key, value);
             }
-            if (log != null) {
+            if (coordinator != null) {
                 if (expiresAt > 0) {
-                    log.append("SET", key, value, "PXAT", Long.toString(expiresAt));
+                    coordinator.record("SET", key, value, "PXAT", Long.toString(expiresAt));
                 } else {
-                    log.append("SET", key, value);
+                    coordinator.record("SET", key, value);
                 }
-                log.maybeCompact(cache);
             }
             out.simple("OK");
         } catch (IOException e) {
             out.error("ERR write to the append-only log failed: " + sanitize(String.valueOf(e.getMessage())));
         } finally {
-            if (log != null) {
-                log.unlock();
+            if (coordinator != null) {
+                coordinator.unlock();
             }
         }
     }
 
     private void del(List<byte[]> args, RespWriter out) throws IOException {
-        if (log != null) {
-            log.lock();
+        if (coordinator != null) {
+            coordinator.lock();
         }
         try {
             long removed = 0;
@@ -268,23 +292,86 @@ final class CommandExecutor {
                     removedKeys.add(key);
                 }
             }
-            if (log != null && !removedKeys.isEmpty()) {
+            if (coordinator != null && !removedKeys.isEmpty()) {
                 String[] record = new String[removedKeys.size() + 1];
                 record[0] = "DEL";
                 for (int i = 0; i < removedKeys.size(); i++) {
                     record[i + 1] = removedKeys.get(i);
                 }
-                log.append(record);
-                log.maybeCompact(cache);
+                coordinator.record(record);
             }
             out.integer(removed);
         } catch (IOException e) {
             out.error("ERR write to the append-only log failed: " + sanitize(String.valueOf(e.getMessage())));
         } finally {
-            if (log != null) {
-                log.unlock();
+            if (coordinator != null) {
+                coordinator.unlock();
             }
         }
+    }
+
+    private boolean readOnly(RespWriter out) throws IOException {
+        if (replication != null && replication.isReplica()) {
+            out.error("READONLY You can't write against a read only replica.");
+            return true;
+        }
+        return false;
+    }
+
+    /** PSYNC replid offset: the sender wants to become a replica of this server. */
+    private Result psync(List<byte[]> args, RespWriter out) throws IOException {
+        if (args.size() != 3) {
+            arity(out, "PSYNC");
+            return Result.CONTINUE;
+        }
+        if (replication == null) {
+            out.error("ERR replication is not enabled on this server");
+            return Result.CONTINUE;
+        }
+        if (replication.isReplica()) {
+            out.error("ERR this server is a replica and cannot have replicas of its own");
+            return Result.CONTINUE;
+        }
+        try {
+            Long.parseLong(text(args.get(2)));
+        } catch (NumberFormatException e) {
+            out.error("ERR value is not an integer or out of range");
+            return Result.CONTINUE;
+        }
+        pendingPsync = new String[] {text(args.get(1)), text(args.get(2))};
+        return Result.REPLICATE;
+    }
+
+    /** REPLICAOF host port, or REPLICAOF NO ONE. */
+    private void replicaOf(List<byte[]> args, RespWriter out) throws IOException {
+        if (args.size() != 3) {
+            arity(out, "REPLICAOF");
+            return;
+        }
+        if (replication == null) {
+            out.error("ERR replication is not enabled on this server");
+            return;
+        }
+        String first = text(args.get(1));
+        String second = text(args.get(2));
+        if (first.equalsIgnoreCase("NO") && second.equalsIgnoreCase("ONE")) {
+            replication.promote();
+            out.simple("OK");
+            return;
+        }
+        int port;
+        try {
+            port = Integer.parseInt(second);
+        } catch (NumberFormatException e) {
+            out.error("ERR value is not an integer or out of range");
+            return;
+        }
+        if (port < 1 || port > 65_535 || first.isEmpty()) {
+            out.error("ERR invalid host or port");
+            return;
+        }
+        replication.replicaOf(first, port);
+        out.simple("OK");
     }
 
     private static void arity(RespWriter out, String command) throws IOException {

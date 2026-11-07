@@ -158,7 +158,8 @@ final class AppendOnlyLog implements AutoCloseable {
         append(encode(args));
     }
 
-    private void append(byte[] record) throws IOException {
+    /** Appends an already-encoded record (see {@link #encode}). The caller must hold {@link #lock()}. */
+    void append(byte[] record) throws IOException {
         lock.lock();
         try {
             if (closed) {
@@ -314,7 +315,7 @@ final class AppendOnlyLog implements AutoCloseable {
                     continue;
                 }
                 try {
-                    apply(command, cache);
+                    applyRecord(command, cache);
                 } catch (IllegalArgumentException e) {
                     throw new IOException("append-only log " + path + " has an invalid record near byte "
                             + goodEnd + ": " + e.getMessage(), e);
@@ -333,9 +334,11 @@ final class AppendOnlyLog implements AutoCloseable {
         return new ReplayResult(records, truncated);
     }
 
-    private static void apply(List<byte[]> command, ShardedLRUCache<String, String> cache) {
+    /** Applies one SET / DEL / PING record to {@code cache}. Throws IllegalArgumentException for anything else. */
+    static void applyRecord(List<byte[]> command, ShardedLRUCache<String, String> cache) {
         String name = text(command.get(0)).toUpperCase(Locale.ROOT);
         switch (name) {
+            case "PING" -> { }
             case "SET" -> {
                 int n = command.size();
                 if (n != 3 && n != 5) {
@@ -373,6 +376,22 @@ final class AppendOnlyLog implements AutoCloseable {
     }
 
     // ------------------------------------------------------------------ encoding
+
+    /** Encodes a command that is already split into raw byte arguments. */
+    static byte[] encodeRaw(List<byte[]> args) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(64);
+        try {
+            write(out, "*" + args.size() + "\r\n");
+            for (byte[] arg : args) {
+                write(out, "$" + arg.length + "\r\n");
+                out.write(arg);
+                write(out, "\r\n");
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+        return out.toByteArray();
+    }
 
     static byte[] encode(String... args) {
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(64);

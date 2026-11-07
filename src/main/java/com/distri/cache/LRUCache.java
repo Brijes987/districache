@@ -245,6 +245,19 @@ public final class LRUCache<K, V> implements Cache<K, V>, AutoCloseable {
         }
     }
 
+    /** Removes every entry. O(n). */
+    public void clear() {
+        lock.writeLock().lock();
+        try {
+            cacheMap.clear();
+            expiryIndex.clear();
+            head.next = tail;
+            tail.prev = head;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
     /**
      * Number of valid (non-expired) entries. Runs under the read lock without mutating anything:
      * it subtracts the entries at the front of the expiry index that are already past their expiry

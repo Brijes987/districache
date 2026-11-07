@@ -47,6 +47,8 @@ public final class CacheServer implements AutoCloseable {
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
 
     private final AppendOnlyLog log;
+    private final Replication replication;      // null: replication not enabled
+    private final WriteCoordinator coordinator; // null: neither persistence nor replication
     private final Authenticator authenticator; // null: no password
     private final SSLContext tls; // null: plain TCP
 
@@ -80,6 +82,15 @@ public final class CacheServer implements AutoCloseable {
 
     CacheServer(ShardedLRUCache<String, String> cache, String host, int port, int maxClients, AppendOnlyLog log,
             Security security) {
+        this(cache, host, port, maxClients, log, security, null);
+    }
+
+    /**
+     * With replication. {@code replication} must have been built on the same cache and the same log. The caller
+     * closes the log and the replication object.
+     */
+    CacheServer(ShardedLRUCache<String, String> cache, String host, int port, int maxClients, AppendOnlyLog log,
+            Security security, Replication replication) {
         if (cache == null) {
             throw new IllegalArgumentException("cache cannot be null");
         }
@@ -91,6 +102,9 @@ public final class CacheServer implements AutoCloseable {
         }
         this.cache = cache;
         this.log = log;
+        this.replication = replication;
+        this.coordinator = replication != null ? replication.coordinator()
+                : (log != null ? new WriteCoordinator(cache, log, null) : null);
         this.authenticator = security.password() == null ? null : new Authenticator(security.password());
         this.tls = security.tlsContext();
         this.host = host;
@@ -214,7 +228,7 @@ public final class CacheServer implements AutoCloseable {
             }
             RespReader reader = new RespReader(socket.getInputStream());
             RespWriter writer = new RespWriter(socket.getOutputStream());
-            CommandExecutor executor = new CommandExecutor(cache, log, authenticator);
+            CommandExecutor executor = new CommandExecutor(cache, coordinator, authenticator, replication);
             boolean preAuthLimit = !executor.isAuthenticated() && authenticator != null;
             if (!preAuthLimit) {
                 socket.setSoTimeout(0);
@@ -245,6 +259,15 @@ public final class CacheServer implements AutoCloseable {
                 if (preAuthLimit && executor.isAuthenticated()) {
                     preAuthLimit = false;
                     socket.setSoTimeout(0); // authenticated: no more pre-auth limit (there is still no idle timeout)
+                }
+                if (result == CommandExecutor.Result.REPLICATE) {
+                    // This connection now carries the replication stream until it ends.
+                    writer.flush();
+                    String[] psync = executor.pendingPsync();
+                    socket.setSoTimeout(0);
+                    replication.hub().serveReplica(socket, reader, writer, psync[0], Long.parseLong(psync[1]), cache,
+                            replication.coordinator());
+                    return;
                 }
                 if (result == CommandExecutor.Result.CLOSE || !reader.hasBufferedInput()) {
                     writer.flush();

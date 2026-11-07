@@ -13,6 +13,13 @@ import java.io.IOException;
  * send AUTH; {@code --tls-keystore PATH} turns on TLS, with the keystore password in the file given by
  * {@code --tls-keystore-password-file} or in DISTRICACHE_KEYSTORE_PASSWORD. Passwords are deliberately not accepted
  * as command-line values, because those show up in process listings.
+ *
+ * <p>Replication (asynchronous, primary to replicas): {@code --allow-replicas} lets this server act as a primary;
+ * {@code --replicaof HOST:PORT} starts it as a read-only replica of that primary. {@code --repl-backlog-bytes N}
+ * (default 16 MiB) is how much recent history a primary keeps for replicas that reconnect. A replica reaches a
+ * primary that needs a password or TLS with {@code --primary-password-file} (or DISTRICACHE_PRIMARY_PASSWORD) and
+ * {@code --primary-truststore PATH} with {@code --primary-truststore-password-file} (or DISTRICACHE_TRUSTSTORE_PASSWORD).
+ * While persistence or replication is on, writes are serialised.
  */
 public final class ServerMain {
 
@@ -28,10 +35,20 @@ public final class ServerMain {
         AppendOnlyLog.FsyncPolicy fsync = AppendOnlyLog.FsyncPolicy.EVERYSEC;
         long compactBytes = AppendOnlyLog.DEFAULT_COMPACTION_THRESHOLD_BYTES;
         String passwordFile = null;
+        boolean allowReplicas = false;
+        String replicaOf = null;
+        long backlogBytes = ReplicationHub.DEFAULT_BACKLOG_BYTES;
+        String primaryPasswordFile = null;
+        String primaryTruststore = null;
+        String primaryTruststorePasswordFile = null;
         String keystorePath = null;
         String keystorePasswordFile = null;
         for (int i = 0; i < args.length; i++) {
             String flag = args[i];
+            if (flag.equals("--allow-replicas")) {
+                allowReplicas = true;
+                continue;
+            }
             if (i + 1 >= args.length) {
                 usage("missing value for " + flag);
                 return;
@@ -48,6 +65,11 @@ public final class ServerMain {
                     case "--fsync" -> fsync = AppendOnlyLog.FsyncPolicy.parse(value);
                     case "--aof-compact-bytes" -> compactBytes = Long.parseLong(value);
                     case "--password-file" -> passwordFile = value;
+                    case "--replicaof" -> replicaOf = value;
+                    case "--repl-backlog-bytes" -> backlogBytes = Long.parseLong(value);
+                    case "--primary-password-file" -> primaryPasswordFile = value;
+                    case "--primary-truststore" -> primaryTruststore = value;
+                    case "--primary-truststore-password-file" -> primaryTruststorePasswordFile = value;
                     case "--tls-keystore" -> keystorePath = value;
                     case "--tls-keystore-password-file" -> keystorePasswordFile = value;
                     default -> {
@@ -98,9 +120,53 @@ public final class ServerMain {
                     + "; " + cache.size() + " live entries; fsync " + fsync.name().toLowerCase());
         }
         final AppendOnlyLog finalLog = log;
-        CacheServer server = new CacheServer(cache, host, port, maxClients, log, security).start();
+        Replication replication = null;
+        String primaryHost = null;
+        int primaryPort = 0;
+        if (allowReplicas || replicaOf != null) {
+            try {
+                if (replicaOf != null) {
+                    int colon = replicaOf.lastIndexOf(':');
+                    if (colon <= 0) {
+                        usage("--replicaof must look like HOST:PORT");
+                        return;
+                    }
+                    primaryHost = replicaOf.substring(0, colon);
+                    primaryPort = Integer.parseInt(replicaOf.substring(colon + 1));
+                }
+                com.distri.cache.client.ClientSecurity linkSecurity = com.distri.cache.client.ClientSecurity.NONE;
+                String linkPassword = secret(primaryPasswordFile, "DISTRICACHE_PRIMARY_PASSWORD");
+                if (primaryTruststore != null) {
+                    String trustPassword = secret(primaryTruststorePasswordFile, "DISTRICACHE_TRUSTSTORE_PASSWORD");
+                    if (trustPassword == null) {
+                        usage("--primary-truststore needs its password in --primary-truststore-password-file or DISTRICACHE_TRUSTSTORE_PASSWORD");
+                        return;
+                    }
+                    linkSecurity = com.distri.cache.client.ClientSecurity.tls(java.nio.file.Path.of(primaryTruststore),
+                            trustPassword.toCharArray(), linkPassword);
+                } else if (linkPassword != null) {
+                    linkSecurity = com.distri.cache.client.ClientSecurity.password(linkPassword);
+                }
+                replication = new Replication(cache, log, Replication.Config.defaults()
+                        .withBacklog(backlogBytes).withSecurity(linkSecurity));
+            } catch (IOException | IllegalArgumentException e) {
+                usage(e.getMessage());
+                return;
+            }
+        }
+        final Replication finalReplication = replication;
+        CacheServer server = new CacheServer(cache, host, port, maxClients, log, security, replication).start();
+        if (replication != null && primaryHost != null) {
+            replication.replicaOf(primaryHost, primaryPort);
+            System.out.println("Replicating from " + primaryHost + ":" + primaryPort + " (read-only replica)");
+        } else if (replication != null) {
+            System.out.println("Accepting replicas (primary). Writes are serialised while replication is on.");
+        }
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             server.close();
+            if (finalReplication != null) {
+                finalReplication.close();
+            }
             cache.shutdown();
             if (finalLog != null) {
                 try {
@@ -140,6 +206,8 @@ public final class ServerMain {
         System.err.println(problem);
         System.err.println("usage: ServerMain [--host H] [--port P] [--capacity N] [--shards N] [--max-clients N]\n"
                 + "             [--aof PATH [--fsync always|everysec|no] [--aof-compact-bytes N]]\n"
-                + "             [--password-file PATH] [--tls-keystore PATH [--tls-keystore-password-file PATH]]");
+                + "             [--password-file PATH] [--tls-keystore PATH [--tls-keystore-password-file PATH]]\n"
+                + "             [--allow-replicas | --replicaof HOST:PORT] [--repl-backlog-bytes N]\n"
+                + "             [--primary-password-file PATH] [--primary-truststore PATH [--primary-truststore-password-file PATH]]");
     }
 }

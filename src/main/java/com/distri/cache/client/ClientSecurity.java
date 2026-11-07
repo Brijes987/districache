@@ -46,6 +46,38 @@ public record ClientSecurity(String password, SSLContext tlsContext) {
         }
     }
 
+    /**
+     * Opens a connection to {@code host:port}: TCP connect, then (if TLS is configured) a handshake that checks the
+     * certificate against the trust store and the host name. The password is NOT sent here.
+     */
+    public java.net.Socket open(String host, int port, int connectTimeoutMillis, int readTimeoutMillis)
+            throws IOException {
+        java.net.Socket s = new java.net.Socket();
+        try {
+            s.connect(new java.net.InetSocketAddress(host, port), connectTimeoutMillis);
+            s.setSoTimeout(readTimeoutMillis);
+            s.setTcpNoDelay(true);
+            if (tlsContext != null) {
+                javax.net.ssl.SSLSocket tls = (javax.net.ssl.SSLSocket) tlsContext.getSocketFactory()
+                        .createSocket(s, host, port, true);
+                s = tls; // closing it closes the underlying socket too
+                javax.net.ssl.SSLParameters params = tls.getSSLParameters();
+                params.setEndpointIdentificationAlgorithm("HTTPS"); // the certificate must match the host name
+                params.setProtocols(new String[] {"TLSv1.3", "TLSv1.2"});
+                tls.setSSLParameters(params);
+                tls.startHandshake();
+            }
+            return s;
+        } catch (IOException | RuntimeException e) {
+            try {
+                s.close();
+            } catch (IOException ignored) {
+                // already failing
+            }
+            throw e;
+        }
+    }
+
     @Override
     public String toString() { // never print the password
         return "ClientSecurity[password=" + (password == null ? "none" : "set") + ", tls=" + (tlsContext != null) + "]";

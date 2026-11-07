@@ -5,7 +5,7 @@
 A thread-safe, in-memory LRU cache with per-entry TTL, written in Java 17 from first principles: a hash
 map plus a **hand-written doubly-linked list**, guarded by a `ReentrantReadWriteLock`.
 
-Includes a Redis-protocol server, a Java client, and client-side consistent-hash routing across several independent servers. Servers do not talk to each other: there is no replication, failover or data migration (see [Known limitations](#known-limitations) and [Roadmap](#roadmap)).
+Includes a Redis-protocol server, a Java client, client-side consistent-hash routing across several servers, and asynchronous primary-replica replication. There is no automatic failover or data migration (see [Known limitations](#known-limitations) and [Roadmap](#roadmap)).
 
 ## Features
 - `put`, `put` with TTL, `get`, `remove`, `delete` (atomic, used by the server's `DEL`), `size`, `capacity`
@@ -16,6 +16,7 @@ Includes a Redis-protocol server, a Java client, and client-side consistent-hash
 - `ShardedLRUCache`: 16 independently locked shards for less lock contention; eviction order is per shard, not global
 - Optional persistence: an append-only log with replay on startup, three fsync policies and compaction (see [docs/PERSISTENCE.md](docs/PERSISTENCE.md))
 - Optional password (`AUTH`) and TLS for the server and client, off by default (see [docs/SECURITY.md](docs/SECURITY.md))
+- Optional asynchronous primary-replica replication with resync after disconnects (see [docs/REPLICATION.md](docs/REPLICATION.md))
 
 ## Usage
 ```java
@@ -30,10 +31,11 @@ the background task off.
 
 ## Server (Redis protocol)
 The cache can be served over TCP using a subset of the Redis wire protocol, so ordinary Redis clients can talk to it.
-Supported commands: `PING`, `ECHO`, `GET`, `SET key value [EX seconds | PX millis | PXAT unix-millis]`, `DEL`, `DBSIZE`, `QUIT`, `AUTH`, `REWRITEAOF`.
+Supported commands: `PING`, `ECHO`, `GET`, `SET key value [EX seconds | PX millis | PXAT unix-millis]`, `DEL`, `DBSIZE`, `QUIT`, `AUTH`, `REWRITEAOF`, and for replication `PSYNC`, `REPLICAOF`, `REPLINFO`.
 Keys and values are UTF-8 text.
-Optional flags: `--aof PATH` (persistence), `--password-file PATH` and `--tls-keystore PATH` (security). See
-[docs/PERSISTENCE.md](docs/PERSISTENCE.md) and [docs/SECURITY.md](docs/SECURITY.md).
+Optional flags: `--aof PATH` (persistence), `--password-file PATH` and `--tls-keystore PATH` (security),
+`--allow-replicas` or `--replicaof HOST:PORT` (replication). See [docs/PERSISTENCE.md](docs/PERSISTENCE.md),
+[docs/SECURITY.md](docs/SECURITY.md) and [docs/REPLICATION.md](docs/REPLICATION.md).
 
 ## Client and multi-server routing
 `CacheClient` talks to one server (get, set with optional TTL, delete, dbSize, ping) and reconnects after a failure.
@@ -52,8 +54,9 @@ try (ClusterClient cluster = ClusterClient.of("10.0.0.1:6380", "10.0.0.2:6380", 
 adding a sixth moved 16.4% of the keys (ideal 16.7%), and none moved between the existing servers. The same change
 with `hash % n` moved 95.6% of the keys in that test.
 
-What it does **not** do: it does not copy data when a server joins or leaves (moved keys simply miss), it does not
-replicate, and it does not fail over: a request routed to a dead server throws `CacheClientException`.
+What `ClusterClient` does **not** do: it does not copy data when a server joins or leaves (moved keys simply miss), it does
+not read from replicas, and it does not fail over: a request routed to a dead server throws `CacheClientException`.
+(The servers themselves can replicate to each other; see docs/REPLICATION.md.)
 
 ```bash
 mvn -DskipTests package
@@ -91,6 +94,7 @@ or ordering, so it is an upper bound, not a fair match.
   `size <= capacity` and an intact internal structure
 - Persistence tests: restart recovery, TTLs across restarts, every possible cut of a half-written record, corrupt-file handling, compaction, and a concurrent-writes test that replays the log and compares it with the live cache
 - Security tests: password gating, lockout, pre-auth timeout, and TLS with trusted, untrusted and wrong-host-name certificates (throw-away test certificates)
+- Replication tests: real servers over real sockets covering full and partial resync, backlog overflow, writes during a resync, primary death and replacement, read-only replicas, promotion, password and TLS on the link, and a replica with its own log
 
 Linearizability is **not** claimed, and these tests do not prove it.
 
@@ -106,8 +110,9 @@ Linearizability is **not** claimed, and these tests do not prove it.
 - Persistence is a single append-only log. It has no checksums, serialises writes while on, and does not log evictions. Details in docs/PERSISTENCE.md.
 - Security is basic: one shared password (no users or permissions), no limit on guesses across connections, no
   client certificates, no certificate reloading. See docs/SECURITY.md.
+- Replication is asynchronous: a write acknowledged to a client can be lost if the primary fails before a replica has it, replicas can serve stale data, and there is no fencing, election or automatic failover (promotion is manual with `REPLICAOF NO ONE`). Evictions are not replicated, so a full replica can hold different entries than its primary. Details in docs/REPLICATION.md.
 
 
 ## Roadmap
-- Done: Redis-protocol server, Java client, consistent-hash routing over several servers, append-only-log persistence, password authentication, TLS
-- Planned next: server-to-server link, asynchronous primary-replica replication, failover, data migration on membership changes
+- Done: Redis-protocol server, Java client, consistent-hash routing over several servers, append-only-log persistence, password authentication, TLS, asynchronous primary-replica replication
+- Planned next: failover and data migration on membership changes

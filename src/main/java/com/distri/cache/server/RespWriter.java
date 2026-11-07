@@ -36,6 +36,11 @@ final class RespWriter {
         out.write(CRLF);
     }
 
+    /** Writes bytes that are already RESP-encoded (a replicated record). */
+    void raw(byte[] encoded) throws IOException {
+        out.write(encoded);
+    }
+
     void nullBulk() throws IOException {
         out.write("$-1\r\n".getBytes(StandardCharsets.US_ASCII));
     }

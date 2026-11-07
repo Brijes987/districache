@@ -10,8 +10,6 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
-import javax.net.ssl.SSLParameters;
-import javax.net.ssl.SSLSocket;
 
 /**
  * A blocking client for one cache server (Redis wire protocol, text keys and values in UTF-8).
@@ -160,20 +158,8 @@ public final class CacheClient implements AutoCloseable {
         if (socket != null) {
             return;
         }
-        Socket s = new Socket();
+        Socket s = security.open(host, port, connectTimeoutMillis, readTimeoutMillis);
         try {
-            s.connect(new InetSocketAddress(host, port), connectTimeoutMillis);
-            s.setSoTimeout(readTimeoutMillis);
-            s.setTcpNoDelay(true);
-            if (security.tlsContext() != null) {
-                SSLSocket tls = (SSLSocket) security.tlsContext().getSocketFactory().createSocket(s, host, port, true);
-                s = tls; // closing it closes the underlying socket too
-                SSLParameters params = tls.getSSLParameters();
-                params.setEndpointIdentificationAlgorithm("HTTPS"); // the certificate must match the host name
-                params.setProtocols(new String[] {"TLSv1.3", "TLSv1.2"});
-                tls.setSSLParameters(params);
-                tls.startHandshake();
-            }
             InputStream newIn = new BufferedInputStream(s.getInputStream());
             OutputStream newOut = s.getOutputStream();
             if (security.password() != null) {

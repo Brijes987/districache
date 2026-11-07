@@ -109,6 +109,13 @@ public final class ShardedLRUCache<K, V> implements Cache<K, V>, AutoCloseable {
         shutdown();
     }
 
+    /** Removes every entry, shard by shard (not atomic across shards). */
+    public void clear() {
+        for (LRUCache<K, V> shard : shards) {
+            shard.clear();
+        }
+    }
+
     /** Removes expired entries from every shard now; returns how many were removed. */
     public int cleanupExpiredEntries() {
         int removed = 0;
