@@ -6,6 +6,7 @@ A thread-safe, in-memory LRU cache with per-entry TTL, written in Java 17 from f
 map plus a **hand-written doubly-linked list**, guarded by a `ReentrantReadWriteLock`.
 
 Includes a Redis-protocol server, a Java client, client-side consistent-hash routing across several servers, and asynchronous primary-replica replication. There is no automatic failover or data migration (see [Known limitations](#known-limitations) and [Roadmap](#roadmap)).
+A Raft consensus core (leader election and log replication, tested on a simulated faulty network) is also included as a library, but it is not yet connected to the server; see [docs/RAFT.md](docs/RAFT.md).
 
 ## Features
 - `put`, `put` with TTL, `get`, `remove`, `delete` (atomic, used by the server's `DEL`), `size`, `capacity`
@@ -115,4 +116,6 @@ Linearizability is **not** claimed, and these tests do not prove it.
 
 ## Roadmap
 - Done: Redis-protocol server, Java client, consistent-hash routing over several servers, append-only-log persistence, password authentication, TLS, asynchronous primary-replica replication
-- Planned next: failover and data migration on membership changes
+- Done: Raft core with a deterministic simulator and randomized fault-injection tests (docs/RAFT.md).
+- Planned next: durable Raft storage, the cache as the replicated state machine, leader redirect and safe client retries, a linearizability checker over fault-injected histories, and a TCP transport.
+- Dropped: a separate monitor process for failover and data migration on membership changes. Raft elects its own leader, so the monitor is not needed, and data migration is not planned.
