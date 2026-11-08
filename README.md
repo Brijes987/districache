@@ -118,5 +118,6 @@ Linearizability is **not** claimed, and these tests do not prove it.
 - Done: Redis-protocol server, Java client, consistent-hash routing over several servers, append-only-log persistence, password authentication, TLS, asynchronous primary-replica replication
 - Done: Raft core with a deterministic simulator and randomized fault-injection tests (docs/RAFT.md).
 - Done: durable Raft storage (checksummed log, crash recovery) and the cache as a replicated state machine with exactly-once client retries, tested in a simulator with crashes, partitions, message loss and duplication (docs/RAFT.md).
-- Planned next: a linearizability checker over fault-injected client histories, then a TCP transport so the replicated cache runs as real servers.
+- Done: a linearizability checker, applied to client histories recorded under crashes, partitions, message loss and duplication. The correct servers passed in all 126 runs; two deliberately broken servers (stale reads from a deposed leader, acknowledging before applying) were caught in 28 of 60 and 30 of 30 runs (docs/RAFT.md).
+- Planned next: a TCP transport so the replicated cache runs as separate server processes, with a kill-the-leader demo and a measured benchmark.
 - Dropped: a separate monitor process for failover and data migration on membership changes. Raft elects its own leader, so the monitor is not needed, and data migration is not planned.
