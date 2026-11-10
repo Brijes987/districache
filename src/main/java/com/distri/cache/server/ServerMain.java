@@ -20,6 +20,9 @@ import java.io.IOException;
  * primary that needs a password or TLS with {@code --primary-password-file} (or DISTRICACHE_PRIMARY_PASSWORD) and
  * {@code --primary-truststore PATH} with {@code --primary-truststore-password-file} (or DISTRICACHE_TRUSTSTORE_PASSWORD).
  * While persistence or replication is on, writes are serialised.
+ *
+ * <p>Metrics: {@code --metrics-port P} serves Prometheus-format metrics at {@code http://127.0.0.1:P/metrics}
+ * ({@code --metrics-host H} to bind elsewhere; the endpoint has no authentication or TLS).
  */
 public final class ServerMain {
 
@@ -43,6 +46,8 @@ public final class ServerMain {
         String primaryTruststorePasswordFile = null;
         String keystorePath = null;
         String keystorePasswordFile = null;
+        String metricsHost = "127.0.0.1";
+        int metricsPort = -1; // -1: no metrics endpoint
         for (int i = 0; i < args.length; i++) {
             String flag = args[i];
             if (flag.equals("--allow-replicas")) {
@@ -72,6 +77,8 @@ public final class ServerMain {
                     case "--primary-truststore-password-file" -> primaryTruststorePasswordFile = value;
                     case "--tls-keystore" -> keystorePath = value;
                     case "--tls-keystore-password-file" -> keystorePasswordFile = value;
+                    case "--metrics-port" -> metricsPort = Integer.parseInt(value);
+                    case "--metrics-host" -> metricsHost = value;
                     default -> {
                         usage("unknown option " + flag);
                         return;
@@ -155,7 +162,25 @@ public final class ServerMain {
             }
         }
         final Replication finalReplication = replication;
-        CacheServer server = new CacheServer(cache, host, port, maxClients, log, security, replication).start();
+        CacheServer server = new CacheServer(cache, host, port, maxClients, log, security, replication);
+        com.distri.cache.metrics.MetricsServer metricsServer = null;
+        if (metricsPort >= 0) {
+            com.distri.cache.metrics.MetricsRegistry registry = new com.distri.cache.metrics.MetricsRegistry();
+            server.enableMetrics(registry);
+            registry.gauge("districache_up", "1 while the server process is running.", () -> 1);
+            try {
+                metricsServer = new com.distri.cache.metrics.MetricsServer(registry, metricsHost, metricsPort).start();
+            } catch (IOException e) {
+                usage("cannot start the metrics endpoint on " + metricsHost + ":" + metricsPort + ": " + e.getMessage());
+                return;
+            }
+            System.out.println("Metrics at http://" + metricsHost + ":" + metricsServer.port() + "/metrics");
+            if (!metricsHost.equals("127.0.0.1") && !metricsHost.equals("localhost") && !metricsHost.equals("::1")) {
+                System.err.println("WARNING: the metrics endpoint has no authentication or TLS and is reachable from the network.");
+            }
+        }
+        final com.distri.cache.metrics.MetricsServer finalMetrics = metricsServer;
+        server.start();
         if (replication != null && primaryHost != null) {
             replication.replicaOf(primaryHost, primaryPort);
             System.out.println("Replicating from " + primaryHost + ":" + primaryPort + " (read-only replica)");
@@ -163,6 +188,9 @@ public final class ServerMain {
             System.out.println("Accepting replicas (primary). Writes are serialised while replication is on.");
         }
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (finalMetrics != null) {
+                finalMetrics.close();
+            }
             server.close();
             if (finalReplication != null) {
                 finalReplication.close();
@@ -208,6 +236,7 @@ public final class ServerMain {
                 + "             [--aof PATH [--fsync always|everysec|no] [--aof-compact-bytes N]]\n"
                 + "             [--password-file PATH] [--tls-keystore PATH [--tls-keystore-password-file PATH]]\n"
                 + "             [--allow-replicas | --replicaof HOST:PORT] [--repl-backlog-bytes N]\n"
-                + "             [--primary-password-file PATH] [--primary-truststore PATH [--primary-truststore-password-file PATH]]");
+                + "             [--primary-password-file PATH] [--primary-truststore PATH [--primary-truststore-password-file PATH]]\n"
+                + "             [--metrics-port P [--metrics-host H]]");
     }
 }

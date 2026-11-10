@@ -28,6 +28,7 @@ final class CommandExecutor {
     private boolean authenticated;
     private int failedAttempts;
     private String[] pendingPsync;               // set when the connection is about to become a replica link
+    private ServerMetrics metrics;               // null when metrics are off
 
     static final int MAX_FAILED_AUTH_ATTEMPTS = 5;
     static final long FAILED_AUTH_DELAY_MILLIS = 250;
@@ -48,6 +49,10 @@ final class CommandExecutor {
         this.authenticator = authenticator;
         this.replication = replication;
         this.authenticated = authenticator == null;
+    }
+
+    void setMetrics(ServerMetrics metrics) {
+        this.metrics = metrics;
     }
 
     /** After {@link Result#REPLICATE}: the PSYNC arguments (replication id, offset). */
@@ -93,8 +98,14 @@ final class CommandExecutor {
                 } else {
                     String value = cache.get(text(args.get(1))).orElse(null);
                     if (value == null) {
+                        if (metrics != null) {
+                            metrics.misses.increment();
+                        }
                         out.nullBulk();
                     } else {
+                        if (metrics != null) {
+                            metrics.hits.increment();
+                        }
                         out.bulk(value.getBytes(StandardCharsets.UTF_8));
                     }
                 }
@@ -182,6 +193,9 @@ final class CommandExecutor {
     /** A fixed delay slows guessing on one connection; too many failures close it. There is no global rate limit. */
     private Result authFailed(RespWriter out) throws IOException {
         failedAttempts++;
+        if (metrics != null) {
+            metrics.authFailures.increment();
+        }
         try {
             Thread.sleep(FAILED_AUTH_DELAY_MILLIS);
         } catch (InterruptedException e) {

@@ -99,9 +99,23 @@ public final class ReplicatedServer implements AutoCloseable {
     private NodeRuntime runtime;
     private ServerSocket clientListener;
     private volatile boolean closed;
+    private volatile NodeMetrics metrics; // null: metrics off
 
     public ReplicatedServer(Config config) {
         this.config = config;
+    }
+
+    /**
+     * Publishes this server's Raft state and client-request numbers into {@code registry}. Call before
+     * {@link #start()}. The Raft gauges read a snapshot that the node's own thread publishes after every step, so a
+     * scrape never touches the (not thread-safe) Raft node; they can be a few milliseconds behind.
+     */
+    public synchronized ReplicatedServer enableMetrics(com.distri.cache.metrics.MetricsRegistry registry) {
+        if (runtime != null) {
+            throw new IllegalStateException("call enableMetrics before start()");
+        }
+        this.metrics = new NodeMetrics(registry, this);
+        return this;
     }
 
     public void start() throws IOException {
@@ -135,6 +149,10 @@ public final class ReplicatedServer implements AutoCloseable {
             closeQuietly();
             throw e;
         }
+    }
+
+    NodeRuntime runtimeForMetrics() {
+        return runtime;
     }
 
     public int id() {
@@ -238,6 +256,16 @@ public final class ReplicatedServer implements AutoCloseable {
     }
 
     private ClientProtocol.Response handle(ClientProtocol.Request r) {
+        NodeMetrics m = metrics;
+        long startedAt = m != null ? System.nanoTime() : 0;
+        ClientProtocol.Response response = handleRequest(r);
+        if (m != null) {
+            m.record(r, response, System.nanoTime() - startedAt);
+        }
+        return response;
+    }
+
+    private ClientProtocol.Response handleRequest(ClientProtocol.Request r) {
         CompletableFuture<ReplicatedCache.Reply> future;
         try {
             future = runtime.call(() -> switch (r.op()) {

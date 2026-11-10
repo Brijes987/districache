@@ -36,6 +36,10 @@ final class NodeRuntime implements AutoCloseable {
     private volatile long term;
     private volatile long commitIndex;
     private volatile int leaderId = -1;
+    private volatile long lastLogIndex;
+    private volatile long lastApplied;
+    private volatile long leaderChanges; // times this node saw its known leader change (including to "none" and back)
+    private volatile long timesLeader;   // times this node became leader
 
     NodeRuntime(RaftNode node, ReplicatedCache cache, long tickMillis, Runnable onFatal) {
         if (tickMillis <= 0) {
@@ -113,6 +117,22 @@ final class NodeRuntime implements AutoCloseable {
         return leaderId;
     }
 
+    long lastLogIndex() {
+        return lastLogIndex;
+    }
+
+    long lastApplied() {
+        return lastApplied;
+    }
+
+    long leaderChanges() {
+        return leaderChanges;
+    }
+
+    long timesLeader() {
+        return timesLeader;
+    }
+
     boolean failed() {
         return failed;
     }
@@ -147,11 +167,21 @@ final class NodeRuntime implements AutoCloseable {
         }
     }
 
-    private void publish() {
-        role = node.role();
+    private void publish() { // runs on the loop thread, the only writer of these fields
+        RaftNode.Role newRole = node.role();
+        if (newRole == RaftNode.Role.LEADER && role != RaftNode.Role.LEADER) {
+            timesLeader++;
+        }
+        int newLeader = node.leaderId();
+        if (newLeader != leaderId) {
+            leaderChanges++;
+        }
+        role = newRole;
         term = node.term();
         commitIndex = node.commitIndex();
-        leaderId = node.leaderId();
+        leaderId = newLeader;
+        lastLogIndex = node.lastLogIndex();
+        lastApplied = node.lastApplied();
     }
 
     @Override

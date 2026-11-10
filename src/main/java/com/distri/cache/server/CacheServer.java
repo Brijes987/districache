@@ -56,6 +56,7 @@ public final class CacheServer implements AutoCloseable {
     private ExecutorService pool;
     private Thread acceptThread;
     private volatile boolean running;
+    private volatile ServerMetrics metrics; // null: metrics off
 
     public CacheServer(ShardedLRUCache<String, String> cache, int port) {
         this(cache, DEFAULT_HOST, port, DEFAULT_MAX_CLIENTS);
@@ -143,6 +144,44 @@ public final class CacheServer implements AutoCloseable {
         this.preAuthTimeoutMillis = millis;
     }
 
+    /**
+     * Publishes this server's numbers (commands, hit ratio, latency, connections, cache size, and the log and
+     * replication state when those are on) into {@code registry}. Call before {@link #start()}. Without a call, the
+     * server records nothing and pays nothing.
+     */
+    public synchronized CacheServer enableMetrics(com.distri.cache.metrics.MetricsRegistry registry) {
+        if (running) {
+            throw new IllegalStateException("call enableMetrics before start()");
+        }
+        ServerMetrics m = new ServerMetrics(registry);
+        registry.gauge("districache_cache_entries", "Live entries in the cache.", cache::size);
+        registry.gauge("districache_cache_capacity", "Configured capacity in entries.", cache::capacity);
+        registry.gauge("districache_connections", "Currently open client connections.", clients::size);
+        if (log != null) {
+            registry.gauge("districache_aof_size_bytes", "Size of the append-only log file.", log::sizeBytes);
+        }
+        if (replication != null) {
+            registry.gauge("districache_replication_is_replica", "1 when this server is a replica, 0 when a primary.",
+                    () -> replication.isReplica() ? 1 : 0);
+            registry.gauge("districache_replication_offset", "Replication stream offset in bytes.", () -> {
+                ReplicaLink link = replication.link();
+                return link != null ? link.offset() : replication.hub().offset();
+            });
+            registry.gauge("districache_replication_connected_replicas", "Replicas attached to this primary.",
+                    () -> replication.hub().replicaCount());
+            registry.gauge("districache_replication_link_up", "On a replica: 1 when connected to its primary.", () -> {
+                ReplicaLink link = replication.link();
+                return link != null && link.isConnected() ? 1 : 0;
+            });
+            registry.gauge("districache_replication_full_syncs", "Full resynchronisations served so far (primary).",
+                    () -> replication.hub().fullSyncs());
+            registry.gauge("districache_replication_partial_syncs", "Partial resynchronisations served so far (primary).",
+                    () -> replication.hub().partialSyncs());
+        }
+        this.metrics = m;
+        return this;
+    }
+
     /** Binds the socket and starts accepting connections. */
     public synchronized CacheServer start() throws IOException {
         if (running) {
@@ -186,9 +225,16 @@ public final class CacheServer implements AutoCloseable {
                 }
                 return;
             }
+            ServerMetrics m = metrics;
             if (!clientSlots.tryAcquire()) {
+                if (m != null) {
+                    m.connectionsRejected.increment();
+                }
                 reject(socket);
                 continue;
+            }
+            if (m != null) {
+                m.connectionsAccepted.increment();
             }
             clients.add(socket);
             try {
@@ -229,6 +275,8 @@ public final class CacheServer implements AutoCloseable {
             RespReader reader = new RespReader(socket.getInputStream());
             RespWriter writer = new RespWriter(socket.getOutputStream());
             CommandExecutor executor = new CommandExecutor(cache, coordinator, authenticator, replication);
+            final ServerMetrics m = metrics;
+            executor.setMetrics(m);
             boolean preAuthLimit = !executor.isAuthenticated() && authenticator != null;
             if (!preAuthLimit) {
                 socket.setSoTimeout(0);
@@ -249,8 +297,14 @@ public final class CacheServer implements AutoCloseable {
                     continue;
                 }
                 CommandExecutor.Result result;
+                long startedAt = m != null ? System.nanoTime() : 0;
                 try {
                     result = executor.execute(command, writer);
+                    if (m != null && result != CommandExecutor.Result.REPLICATE) {
+                        // a REPLICATE command turns this connection into a long-lived stream: not a latency sample
+                        m.record(new String(command.get(0), StandardCharsets.UTF_8).toUpperCase(java.util.Locale.ROOT),
+                                System.nanoTime() - startedAt);
+                    }
                 } catch (RuntimeException e) {
                     LOG.log(System.Logger.Level.ERROR, "command failed", e);
                     writer.error("ERR internal error");

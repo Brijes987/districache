@@ -18,6 +18,8 @@ import java.util.Map;
  * --tick-ms N                  milliseconds per Raft tick (default 10); election timeout is 30 to 60 ticks
  * --capacity N                 cache capacity in entries (default 10000)
  * --no-fsync                   do not force writes to disk (FASTER, NOT DURABLE: only for experiments)
+ * --metrics-port P             serve Prometheus metrics at http://127.0.0.1:P/metrics (--metrics-host H to bind elsewhere;
+ *                              no authentication or TLS)
  * </pre>
  *
  * Passwords are read from files, not the command line, because command lines show up in process listings.
@@ -37,6 +39,8 @@ public final class ReplicatedServerMain {
         long tickMillis = 10;
         int capacity = 10_000;
         boolean fsync = true;
+        String metricsHost = "127.0.0.1";
+        int metricsPort = -1;
         try {
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
@@ -48,6 +52,8 @@ public final class ReplicatedServerMain {
                     case "--tick-ms" -> tickMillis = Long.parseLong(value(args, ++i));
                     case "--capacity" -> capacity = Integer.parseInt(value(args, ++i));
                     case "--no-fsync" -> fsync = false;
+                    case "--metrics-port" -> metricsPort = Integer.parseInt(value(args, ++i));
+                    case "--metrics-host" -> metricsHost = value(args, ++i);
                     default -> throw new IllegalArgumentException("unknown option " + args[i]);
                 }
             }
@@ -57,7 +63,8 @@ public final class ReplicatedServerMain {
         } catch (IllegalArgumentException e) {
             System.err.println("error: " + e.getMessage());
             System.err.println("usage: ReplicatedServerMain --id N --members 0=host:peerPort:clientPort,... --data DIR"
-                    + " [--peer-secret-file F] [--client-secret-file F] [--tick-ms N] [--capacity N] [--no-fsync]");
+                    + " [--peer-secret-file F] [--client-secret-file F] [--tick-ms N] [--capacity N] [--no-fsync]"
+                    + " [--metrics-port P [--metrics-host H]]");
             System.exit(2);
             return;
         }
@@ -75,8 +82,25 @@ public final class ReplicatedServerMain {
             System.err.println("WARNING: no --peer-secret-file: anyone who can reach the peer port can inject Raft messages.");
         }
         ReplicatedServer server = new ReplicatedServer(config);
+        com.distri.cache.metrics.MetricsServer metricsServer = null;
+        if (metricsPort >= 0) {
+            com.distri.cache.metrics.MetricsRegistry registry = new com.distri.cache.metrics.MetricsRegistry();
+            server.enableMetrics(registry);
+            registry.gauge("districache_up", "1 while the server process is running.", () -> 1);
+            metricsServer = new com.distri.cache.metrics.MetricsServer(registry, metricsHost, metricsPort).start();
+            System.out.println("Metrics at http://" + metricsHost + ":" + metricsServer.port() + "/metrics");
+            if (!metricsHost.equals("127.0.0.1") && !metricsHost.equals("localhost") && !metricsHost.equals("::1")) {
+                System.err.println("WARNING: the metrics endpoint has no authentication or TLS and is reachable from the network.");
+            }
+        }
+        final com.distri.cache.metrics.MetricsServer finalMetrics = metricsServer;
         server.start();
-        Runtime.getRuntime().addShutdownHook(new Thread(server::close));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (finalMetrics != null) {
+                finalMetrics.close();
+            }
+            server.close();
+        }));
         System.out.println("server " + id + " ready: peers on port " + server.peerPort() + ", clients on port "
                 + server.clientPort() + ", data in " + dataDir);
         System.out.flush();
