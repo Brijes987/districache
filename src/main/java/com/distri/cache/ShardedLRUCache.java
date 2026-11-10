@@ -38,8 +38,16 @@ public final class ShardedLRUCache<K, V> implements Cache<K, V>, AutoCloseable {
      * @param cleanupIntervalMillis background cleanup period for each shard; {@code <= 0} disables it
      * @throws IllegalArgumentException if capacity or shardCount is not positive
      */
-    @SuppressWarnings("unchecked")
     public ShardedLRUCache(int capacity, int shardCount, long cleanupIntervalMillis) {
+        this(capacity, shardCount, cleanupIntervalMillis, false);
+    }
+
+    /**
+     * As above, and {@code bufferedReads = true} makes every shard record hits in a lock-free buffer instead of
+     * reordering its list on each hit (approximate recency under concurrency; see {@link LRUCache}).
+     */
+    @SuppressWarnings("unchecked")
+    public ShardedLRUCache(int capacity, int shardCount, long cleanupIntervalMillis, boolean bufferedReads) {
         if (capacity <= 0) {
             throw new IllegalArgumentException("Capacity must be positive");
         }
@@ -53,7 +61,7 @@ public final class ShardedLRUCache<K, V> implements Cache<K, V>, AutoCloseable {
         int base = capacity / n;
         int extra = capacity % n;
         for (int i = 0; i < n; i++) {
-            shards[i] = new LRUCache<>(base + (i < extra ? 1 : 0), cleanupIntervalMillis);
+            shards[i] = new LRUCache<>(base + (i < extra ? 1 : 0), cleanupIntervalMillis, bufferedReads);
         }
     }
 

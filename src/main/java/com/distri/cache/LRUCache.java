@@ -40,6 +40,20 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * Honest limitation: with a hit rate where most hits are NOT already at the head, most gets end up
  * on the write path, so read concurrency is limited. That is the cost of strict LRU ordering.
  *
+ * <h2>Optional buffered reads</h2>
+ * With {@code bufferedReads = true} a hit never takes the write lock: it records the entry in a lossy,
+ * lock-free {@link ReadBuffer} and returns the value it read under the read lock. The recorded hits are applied to
+ * the LRU list in batches, by whichever thread finds its stripe half full and wins {@code tryLock} on the write
+ * lock, and always before a {@code put} evicts anything and before a snapshot is taken. So:
+ * <ul>
+ *   <li>Values, TTL and capacity behave exactly as in the default mode.</li>
+ *   <li>Recency is <b>approximate</b> under concurrency: a hit's effect can be applied late, and a hit is
+ *       dropped (its entry not refreshed) if its stripe is full and the write lock is busy. The only visible
+ *       effect is which entry a later {@code put} evicts.</li>
+ *   <li>With a single thread nothing is ever dropped and the order is the same as in the default mode.</li>
+ *   <li>A get of an expired entry returns empty but leaves removal to the next put or cleanup run.</li>
+ * </ul>
+ *
  * <h2>Expiry</h2>
  * <ul>
  *   <li>Lazy: get() treats an expired entry as absent and removes it.</li>
@@ -78,6 +92,9 @@ public final class LRUCache<K, V> implements Cache<K, V>, AutoCloseable {
     // Null when background cleanup is disabled.
     private final ScheduledFuture<?> cleanupTask;
 
+    // Null in the default (exact) mode. Hits are recorded here instead of reordering the list.
+    private final ReadBuffer<CacheEntry<K, V>> readBuffer;
+
     /** Creates a cache with background cleanup every {@value #DEFAULT_CLEANUP_INTERVAL_MILLIS} ms. */
     public LRUCache(int capacity) {
         this(capacity, DEFAULT_CLEANUP_INTERVAL_MILLIS);
@@ -90,12 +107,21 @@ public final class LRUCache<K, V> implements Cache<K, V>, AutoCloseable {
      * @throws IllegalArgumentException if capacity &lt;= 0
      */
     public LRUCache(int capacity, long cleanupIntervalMillis) {
+        this(capacity, cleanupIntervalMillis, false);
+    }
+
+    /**
+     * @param bufferedReads {@code true} to record hits in a lock-free buffer and apply them to the LRU order in
+     *     batches (approximate recency under concurrency, see the class comment); {@code false} for exact LRU
+     */
+    public LRUCache(int capacity, long cleanupIntervalMillis, boolean bufferedReads) {
         if (capacity <= 0) {
             throw new IllegalArgumentException("Capacity must be positive");
         }
         this.capacity = capacity;
         this.cacheMap = new HashMap<>(capacity);
         this.lock = new ReentrantReadWriteLock();
+        this.readBuffer = bufferedReads ? ReadBuffer.withDefaults() : null;
 
         this.head = new CacheEntry<>(null, null);
         this.tail = new CacheEntry<>(null, null);
@@ -138,6 +164,9 @@ public final class LRUCache<K, V> implements Cache<K, V>, AutoCloseable {
         lock.writeLock().lock();
         try {
             long now = System.currentTimeMillis();
+            if (readBuffer != null) {
+                drainReadBufferLocked(now); // so that recent hits count before anything is evicted
+            }
             // Reclaim expired entries first: they must not count against capacity, and must be
             // removed before any still-valid entry is evicted. An expired entry for this very key
             // is removed here too, so the key is then handled as a fresh insert.
@@ -172,6 +201,9 @@ public final class LRUCache<K, V> implements Cache<K, V>, AutoCloseable {
     @Override
     public Optional<V> get(K key) {
         validateKey(key);
+        if (readBuffer != null) {
+            return getBuffered(key);
+        }
 
         // Phase 1: read lock. Misses, and hits that are already most-recently-used, need no change.
         lock.readLock().lock();
@@ -204,6 +236,61 @@ public final class LRUCache<K, V> implements Cache<K, V>, AutoCloseable {
         } finally {
             lock.writeLock().unlock();
         }
+    }
+
+    /** Buffered-read mode: the read lock only; recency is recorded, not applied. */
+    private Optional<V> getBuffered(K key) {
+        CacheEntry<K, V> node;
+        V value;
+        lock.readLock().lock();
+        try {
+            node = cacheMap.get(key);
+            if (node == null || node.isExpired()) {
+                return Optional.empty();
+            }
+            value = node.value;
+        } finally {
+            lock.readLock().unlock();
+        }
+        // The read lock is released before the buffer is touched or the write lock is tried.
+        if (readBuffer.offer(node) != ReadBuffer.Result.RECORDED && lock.writeLock().tryLock()) {
+            try {
+                drainReadBufferLocked(System.currentTimeMillis());
+            } finally {
+                lock.writeLock().unlock();
+            }
+        }
+        return Optional.of(value);
+    }
+
+    /**
+     * Applies all recorded hits to the LRU order now. Does nothing in the default mode. Takes the write lock, so
+     * it waits for it; used before snapshots and by tests.
+     */
+    public void drainReadBuffer() {
+        if (readBuffer == null) {
+            return;
+        }
+        lock.writeLock().lock();
+        try {
+            drainReadBufferLocked(System.currentTimeMillis());
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /** Whether this cache records hits in a buffer instead of reordering the list on every hit. */
+    public boolean bufferedReads() {
+        return readBuffer != null;
+    }
+
+    /** Caller holds the write lock. An entry that was removed, replaced or expired since it was recorded is skipped. */
+    private void drainReadBufferLocked(long now) {
+        readBuffer.drain(e -> {
+            if (cacheMap.get(e.key) == e && e.prev != null && !e.isExpired(now) && head.next != e) {
+                moveToFront(e);
+            }
+        });
     }
 
     @Override
@@ -330,6 +417,7 @@ public final class LRUCache<K, V> implements Cache<K, V>, AutoCloseable {
      * O(n); holds the read lock while copying, so writers on this cache wait.
      */
     public java.util.List<CacheSnapshotEntry<K, V>> snapshotLruToMru() {
+        drainReadBuffer(); // no-op in the default mode
         long now = System.currentTimeMillis();
         lock.readLock().lock();
         try {

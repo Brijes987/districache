@@ -13,6 +13,9 @@ import org.openjdk.jmh.annotations.*;
  * ordering, so it is an upper bound on speed, not a like-for-like competitor: the interesting
  * number is how much the LRU bookkeeping and locking cost.
  *
+ * The "-buffered" variants record hits in a lock-free buffer instead of reordering the list on every hit
+ * (see docs/READ_BUFFER.md); compare them with the plain variants in the same run.
+ *
  * Run:  java -jar target/benchmarks.jar -t 1   (single thread)
  *       java -jar target/benchmarks.jar -t 4   (4 threads)
  */
@@ -26,7 +29,7 @@ public class CacheBenchmark {
 
     private static final int KEY_SPACE = 10_000;
 
-    @Param({"lru", "sharded", "baseline"})
+    @Param({"lru", "lru-buffered", "sharded", "sharded-buffered", "baseline"})
     public String impl;
 
     /** Cache capacity as a fraction of the key space: smaller = more misses and evictions. */
@@ -40,7 +43,9 @@ public class CacheBenchmark {
         int capacity = Math.max(1, (int) (KEY_SPACE * capacityRatio));
         switch (impl) {
             case "lru" -> cache = new LRUCache<>(capacity, 0);
+            case "lru-buffered" -> cache = new LRUCache<>(capacity, 0, true);
             case "sharded" -> cache = new ShardedLRUCache<>(capacity, 16, 0);
+            case "sharded-buffered" -> cache = new ShardedLRUCache<>(capacity, 16, 0, true);
             default -> cache = new BaselineCache<>();
         }
         for (int i = 0; i < KEY_SPACE; i++) {

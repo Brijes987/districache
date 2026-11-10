@@ -6,3 +6,5 @@ patch_backup/
 *.iml
 *.log
 dependency-reduced-pom.xml
+
+benchmarks/*.txt

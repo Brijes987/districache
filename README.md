@@ -55,6 +55,9 @@ try (LRUCache<String, String> cache = new LRUCache<>(1000)) {
 - TTL expiry three ways: lazily on `get`, eagerly on `put`, and in the background
 - Expired entries never count against capacity and are always removed before a valid entry is evicted
 - `ShardedLRUCache`: 16 independently locked shards for less lock contention; eviction order is per shard, not global
+- Optional **buffered reads** (`bufferedReads = true`): hits are recorded in a lock-free buffer instead of taking the write
+  lock, at the price of approximate recency under concurrency; 1.1x to 1.6x more throughput with 2 to 4 threads in my
+  benchmark, no gain with one thread (see [docs/READ_BUFFER.md](docs/READ_BUFFER.md))
 - `BaselineCache` (a `ConcurrentHashMap` wrapper) for benchmark comparison
 
 ## Single server (Redis protocol)
@@ -168,7 +171,7 @@ requests by outcome. Latency percentiles are bucket-edge estimates of server-sid
 ```bash
 mvn clean test
 ```
-396 tests, 0 failures at the time of writing, run on every push by GitHub Actions.
+413 tests, 0 failures at the time of writing, run on every push by GitHub Actions.
 
 ## Benchmarks
 Single-node cache throughput uses JMH:
@@ -204,6 +207,9 @@ ordering, so it is an upper bound, not a fair match. The replicated cluster benc
 - **Real processes**: a test that kills real server leaders on real disks and checks the recorded history. Limits: with
   check-quorum on, the stale-read bug is mostly masked in real time (a cut-off leader steps down quickly), while the
   simulator still catches it; see docs/RAFT.md.
+- Buffered-read tests: a concurrent recording test (everything reported as recorded is delivered exactly once, in order),
+  identical behaviour to exact LRU with one thread over random sequences, and an 8-thread stress test; six deliberate bugs
+  in the buffer code were each caught by a failing test
 - Metrics tests compare every counter and gauge with what a real client or a real three-server group actually did.
 
 The claim is **tested with randomized fault injection against stated invariants**. It is not a formal proof, and the
@@ -213,7 +219,9 @@ cluster has not been tested on separate machines or under real network faults be
 **Single server**
 - One lock guards each cache. A hit on anything other than the most recent entry reorders the list and takes the write
   lock, so read scalability is limited: this is the price of strict LRU. In the benchmarks, 4-thread throughput was lower
-  than single-thread throughput (docs/BENCHMARKS.md). `ShardedLRUCache` improves 4-thread throughput by 1.2x to 2.8x
+  than single-thread throughput (docs/BENCHMARKS.md). The opt-in buffered-reads mode removes the exclusive lock from hits
+  and raised 2-to-4-thread throughput by 1.1x to 1.6x, but with approximate recency, no gain on one thread, and a hit-ratio cost
+  that has not been measured (docs/READ_BUFFER.md). `ShardedLRUCache` improves 4-thread throughput by 1.2x to 2.8x
   over the single-lock cache on the test machine (2 cores) but does not exceed its own single-thread speed there.
 - Cleanup removes all expired entries under the write lock, so a large batch expiring at once briefly blocks writers on
   that shard. The server uses one thread per connection and has no idle timeout once authenticated; keys and values are
@@ -247,7 +255,7 @@ cluster has not been tested on separate machines or under real network faults be
 - Done: a TCP runtime so the replicated cache runs as separate server processes, with the kill-the-leader demo and a
   measured benchmark
 - Done: Prometheus metrics for both server modes
-- Not started (ideas, in the order I would do them): group commit for the Raft log; an experiment with batched read
-  recency updates to reduce lock contention on the single-node cache, with before-and-after benchmarks; log snapshots
-  and compaction; read-index reads; TLS for the replicated mode; a test on separate machines
+- Done: opt-in buffered reads with a before/after JMH comparison (docs/READ_BUFFER.md); not yet exposed as a server flag
+- Not started (ideas, in the order I would do them): group commit for the Raft log; measuring the hit-ratio cost of buffered
+  reads; log snapshots and compaction; read-index reads; TLS for the replicated mode; a test on separate machines
 - Dropped: a separate failover monitor process (Raft elects its own leader) and data migration on membership changes
