@@ -148,17 +148,39 @@ public final class RaftNode {
      * {@link #commitIndex()}), and it can still be lost if this leader loses leadership first.
      */
     public ProposeResult propose(byte[] command) {
-        if (command.length == 0) {
-            throw new IllegalArgumentException("a command cannot be empty (empty is reserved for no-op entries)");
+        return proposeBatch(List.of(command));
+    }
+
+    /**
+     * Group commit: adds several commands to the log with <b>one</b> storage write (one fsync), one broadcast and one
+     * commit check. The entries get consecutive indexes starting at {@link ProposeResult#index()}, the same safety
+     * rules as {@link #propose} apply to each of them: they are durable on this node before any follower is told
+     * about them, and none counts as committed until a majority holds it.
+     *
+     * @return {@code index} is the index of the FIRST command; the command at position {@code i} has index
+     *     {@code index + i}. Not accepted (and nothing written) if this node is not the leader.
+     */
+    public ProposeResult proposeBatch(List<byte[]> commands) {
+        if (commands.isEmpty()) {
+            throw new IllegalArgumentException("a batch cannot be empty");
+        }
+        for (byte[] command : commands) {
+            if (command.length == 0) {
+                throw new IllegalArgumentException("a command cannot be empty (empty is reserved for no-op entries)");
+            }
         }
         if (role != Role.LEADER) {
             return new ProposeResult(false, 0, currentTerm, leaderId);
         }
-        storage.append(List.of(new LogEntry(currentTerm, command)));
-        long index = storage.lastIndex();
+        List<LogEntry> entries = new ArrayList<>(commands.size());
+        for (byte[] command : commands) {
+            entries.add(new LogEntry(currentTerm, command));
+        }
+        long first = storage.lastIndex() + 1;
+        storage.append(entries);
         broadcastAppend();
         advanceCommit(); // a group of one commits at once
-        return new ProposeResult(true, index, currentTerm, id);
+        return new ProposeResult(true, first, currentTerm, id);
     }
 
     /** A message from server {@code from} arrived. */

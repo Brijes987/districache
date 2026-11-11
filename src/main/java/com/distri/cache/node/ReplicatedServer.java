@@ -89,6 +89,8 @@ public final class ReplicatedServer implements AutoCloseable {
 
     private static final String CLIENT_ROLE = "raft-client";
     private static final int MAX_CLIENTS = 256;
+    /** Up to this many queued client requests share one log append and fsync. */
+    public static final int DEFAULT_MAX_BATCH = 256;
 
     private final Config config;
     private final Semaphore clientSlots = new Semaphore(MAX_CLIENTS);
@@ -100,6 +102,7 @@ public final class ReplicatedServer implements AutoCloseable {
     private ServerSocket clientListener;
     private volatile boolean closed;
     private volatile NodeMetrics metrics; // null: metrics off
+    private int maxBatch = DEFAULT_MAX_BATCH;
 
     public ReplicatedServer(Config config) {
         this.config = config;
@@ -115,6 +118,18 @@ public final class ReplicatedServer implements AutoCloseable {
             throw new IllegalStateException("call enableMetrics before start()");
         }
         this.metrics = new NodeMetrics(registry, this);
+        return this;
+    }
+
+    /** Group commit size: 1 = every request is written and fsynced alone. Call before {@link #start()}. */
+    public synchronized ReplicatedServer setMaxBatch(int maxBatch) {
+        if (runtime != null) {
+            throw new IllegalStateException("call setMaxBatch before start()");
+        }
+        if (maxBatch <= 0) {
+            throw new IllegalArgumentException("maxBatch must be positive");
+        }
+        this.maxBatch = maxBatch;
         return this;
     }
 
@@ -136,7 +151,7 @@ public final class ReplicatedServer implements AutoCloseable {
             RaftNode node = new RaftNode(config.id(), peerIds, storage, transport, cache, config.raft(),
                     new Random(System.nanoTime() ^ config.id()));
             cache.attach(node);
-            runtime = new NodeRuntime(node, cache, config.tickMillis(), this::close);
+            runtime = new NodeRuntime(node, cache, config.tickMillis(), maxBatch, this::close);
             transport.start(self.host(), self.peerPort());
             clientListener = new ServerSocket();
             clientListener.setReuseAddress(true);

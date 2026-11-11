@@ -47,6 +47,7 @@ Only `GET` and `HEAD` are accepted.
 | `districache_raft_commit_index`, `..._last_log_index`, `..._last_applied_index` | gauge | Log positions. |
 | `districache_raft_commit_lag_entries` | gauge | `last_log_index - commit_index`: entries in the log not yet known to be committed. |
 | `districache_raft_apply_lag_entries` | gauge | `commit_index - last_applied_index`. |
+| `districache_raft_proposal_batches`, `..._proposed_entries` | gauge | Group commit on the leader: log appends made for client requests, and the requests they carried (monotonic; mean batch = entries / batches). Both stay 0 with `--max-batch 1`. |
 | `districache_raft_leader_changes`, `..._times_became_leader` | gauge | Counts since this process started (gauges, because they are read from the node's published snapshot). |
 | `districache_raft_failed` | gauge | 1 if the node stopped itself after an internal error (fail-stop). |
 | `districache_raft_client_requests_total{op,outcome}` | counter | Client requests by `set`/`del`/`get` and `ok`/`not_leader`/`unknown`/`stale`/`error`. |

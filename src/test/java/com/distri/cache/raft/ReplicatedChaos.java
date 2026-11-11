@@ -22,6 +22,9 @@ final class ReplicatedChaos {
         int acknowledged;
         int retries;
         int duplicatesInLog;
+        long batches;
+        long batchedEntries;
+        long largestBatch;
     }
 
     private static final class Client {
@@ -68,8 +71,14 @@ final class ReplicatedChaos {
     /** @param endStateChecks false to return the history without the replica and exactly-once checks */
     static Result run(long seed, int steps, Chaos.Profile faults, RaftConfig config, ReplicatedCache.Fault fault,
             Path storageDir, boolean endStateChecks) {
+        return run(seed, steps, faults, config, fault, storageDir, endStateChecks, false);
+    }
+
+    /** @param batching group commit on: clients' requests queue and are written together, as the real node does */
+    static Result run(long seed, int steps, Chaos.Profile faults, RaftConfig config, ReplicatedCache.Fault fault,
+            Path storageDir, boolean endStateChecks, boolean batching) {
         int n = seed % 2 == 0 ? 3 : 5;
-        ReplicatedHarness h = new ReplicatedHarness(n, seed, config, storageDir);
+        ReplicatedHarness h = new ReplicatedHarness(n, seed, config, storageDir, batching);
         if (fault != null) {
             h.faultForAllNodes = fault;
             for (ReplicatedCache c : h.caches) {
@@ -83,6 +92,10 @@ final class ReplicatedChaos {
                 faults.partitionRate(), faults.healRate(), faults.networkChangeRate());
         chaos.run(steps, noRandomProposals);
         run.settle();
+        h.collectLive();
+        run.result.batches = h.batches;
+        run.result.batchedEntries = h.batchedEntries;
+        run.result.largestBatch = h.largestBatch;
         if (endStateChecks) {
             run.check();
         }

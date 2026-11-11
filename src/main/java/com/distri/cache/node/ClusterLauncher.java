@@ -22,6 +22,7 @@ final class ClusterLauncher implements AutoCloseable {
     private final int n;
     private final Path root;
     private final boolean fsync;
+    private final int maxBatch; // 0 = server default
     private final int[] peerPorts;
     private final int[] clientPorts;
     private final Process[] processes;
@@ -31,6 +32,11 @@ final class ClusterLauncher implements AutoCloseable {
     private final String members;
 
     ClusterLauncher(int n, Path root, boolean fsync) throws IOException {
+        this(n, root, fsync, 0);
+    }
+
+    ClusterLauncher(int n, Path root, boolean fsync, int maxBatch) throws IOException {
+        this.maxBatch = maxBatch;
         this.n = n;
         this.root = root;
         this.fsync = fsync;
@@ -76,6 +82,10 @@ final class ClusterLauncher implements AutoCloseable {
                 "--client-secret-file", clientSecretFile.toString()));
         if (!fsync) {
             command.add("--no-fsync");
+        }
+        if (maxBatch > 0) {
+            command.add("--max-batch");
+            command.add(String.valueOf(maxBatch));
         }
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectErrorStream(true);

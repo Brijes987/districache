@@ -94,4 +94,22 @@ class LinearizabilityChaosTest {
         }
         assertTrue(violations >= 25, "got " + violations + "/30");
     }
+
+    @Test
+    void withGroupCommitTheSystemIsStillLinearizableUnderFaults() {
+        long largest = 0;
+        int ops = 0;
+        for (long seed = 501; seed <= 560; seed++) {
+            for (Chaos.Profile profile : new Chaos.Profile[] {Chaos.Profile.normal(), Chaos.Profile.brutal()}) {
+                ReplicatedChaos.Result r = ReplicatedChaos.run(seed, 3_000, profile,
+                        RaftConfig.defaults().withCheckQuorum(seed % 3 != 0), null, null, true, true);
+                LinearizabilityChecker.Result res = checker.check(r.history);
+                assertEquals(Status.LINEARIZABLE, res.status(), "seed " + seed + "\n" + res.explanation());
+                largest = Math.max(largest, r.largestBatch);
+                ops += r.history.size();
+            }
+        }
+        assertTrue(largest >= 2, "group commit must actually have batched: " + largest);
+        assertTrue(ops > 10_000, "too little checked: " + ops);
+    }
 }

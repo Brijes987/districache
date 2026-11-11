@@ -16,6 +16,7 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
     ReplicatedCache.Fault faultForAllNodes;
 
     private final Path storageDir; // null: keep Raft state in memory
+    private final boolean batching; // group commit: requests wait in a queue until flushAll()
     private final Random tornTails;
     private final FileRaftStorage[] files;
 
@@ -29,6 +30,11 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
      *     and recovers from disk
      */
     ReplicatedHarness(int n, long seed, RaftConfig config, Path storageDir) {
+        this(n, seed, config, storageDir, false);
+    }
+
+    ReplicatedHarness(int n, long seed, RaftConfig config, Path storageDir, boolean batching) {
+        this.batching = batching;
         this.storageDir = storageDir;
         this.tornTails = new Random(seed * 17 + 3);
         this.files = new FileRaftStorage[n];
@@ -39,6 +45,7 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
     @Override
     public StateMachine create(int node) {
         caches[node] = new ReplicatedCache(1_000, 100, System::currentTimeMillis, true);
+        caches[node].setBatching(batching);
         if (faultForAllNodes != null) {
             caches[node].injectFault(faultForAllNodes);
         }
@@ -52,6 +59,7 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
 
     @Override
     public void stopped(int node) {
+        collect(caches[node]);
         caches[node].close();
         caches[node] = null;
         if (files[node] != null) {
@@ -116,7 +124,36 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
         pollAll();
     }
 
+    long batches;
+    long batchedEntries;
+    long largestBatch;
+
+    private void collect(ReplicatedCache c) {
+        batches += c.batchesProposed();
+        batchedEntries += c.entriesBatched();
+        largestBatch = Math.max(largestBatch, c.largestBatch());
+    }
+
+    /** Batch statistics of every server so far, including those that crashed and were rebuilt. */
+    void collectLive() {
+        for (ReplicatedCache c : caches) {
+            if (c != null) {
+                collect(c);
+            }
+        }
+    }
+
+    /** What the real node's loop does after running a batch of queued requests. */
+    void flushAll() {
+        for (ReplicatedCache c : caches) {
+            if (c != null) {
+                c.flush();
+            }
+        }
+    }
+
     void pollAll() {
+        flushAll();
         for (int i = 0; i < caches.length; i++) {
             if (caches[i] != null) {
                 caches[i].poll();

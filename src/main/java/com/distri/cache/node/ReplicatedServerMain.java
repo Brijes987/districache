@@ -18,6 +18,8 @@ import java.util.Map;
  * --tick-ms N                  milliseconds per Raft tick (default 10); election timeout is 30 to 60 ticks
  * --capacity N                 cache capacity in entries (default 10000)
  * --no-fsync                   do not force writes to disk (FASTER, NOT DURABLE: only for experiments)
+ * --max-batch N               group commit: up to N queued client requests share one log write and fsync
+ *                              (default 256; 1 = every request is fsynced alone)
  * --metrics-port P             serve Prometheus metrics at http://127.0.0.1:P/metrics (--metrics-host H to bind elsewhere;
  *                              no authentication or TLS)
  * </pre>
@@ -39,6 +41,7 @@ public final class ReplicatedServerMain {
         long tickMillis = 10;
         int capacity = 10_000;
         boolean fsync = true;
+        int maxBatch = ReplicatedServer.DEFAULT_MAX_BATCH;
         String metricsHost = "127.0.0.1";
         int metricsPort = -1;
         try {
@@ -52,6 +55,7 @@ public final class ReplicatedServerMain {
                     case "--tick-ms" -> tickMillis = Long.parseLong(value(args, ++i));
                     case "--capacity" -> capacity = Integer.parseInt(value(args, ++i));
                     case "--no-fsync" -> fsync = false;
+                    case "--max-batch" -> maxBatch = Integer.parseInt(value(args, ++i));
                     case "--metrics-port" -> metricsPort = Integer.parseInt(value(args, ++i));
                     case "--metrics-host" -> metricsHost = value(args, ++i);
                     default -> throw new IllegalArgumentException("unknown option " + args[i]);
@@ -63,7 +67,7 @@ public final class ReplicatedServerMain {
         } catch (IllegalArgumentException e) {
             System.err.println("error: " + e.getMessage());
             System.err.println("usage: ReplicatedServerMain --id N --members 0=host:peerPort:clientPort,... --data DIR"
-                    + " [--peer-secret-file F] [--client-secret-file F] [--tick-ms N] [--capacity N] [--no-fsync]"
+                    + " [--peer-secret-file F] [--client-secret-file F] [--tick-ms N] [--capacity N] [--no-fsync] [--max-batch N]"
                     + " [--metrics-port P [--metrics-host H]]");
             System.exit(2);
             return;
@@ -81,7 +85,7 @@ public final class ReplicatedServerMain {
         if (config.peerSecret() == null) {
             System.err.println("WARNING: no --peer-secret-file: anyone who can reach the peer port can inject Raft messages.");
         }
-        ReplicatedServer server = new ReplicatedServer(config);
+        ReplicatedServer server = new ReplicatedServer(config).setMaxBatch(maxBatch);
         com.distri.cache.metrics.MetricsServer metricsServer = null;
         if (metricsPort >= 0) {
             com.distri.cache.metrics.MetricsRegistry registry = new com.distri.cache.metrics.MetricsRegistry();

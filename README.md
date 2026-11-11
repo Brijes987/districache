@@ -137,7 +137,8 @@ the election timeout settings.
 
 ### Benchmark
 Three server processes, clients and disk all on one machine over loopback, 100-byte values, 5 s per cell after a 1 s
-warm-up. Windows 10, JDK 23.0.1, 2 CPUs. Relative costs, not production capacity.
+warm-up. Windows 10, JDK 23.0.1, 2 CPUs. Relative costs, not production capacity. **This first table was measured before
+group commit was added** (one sync per entry); the comparison with group commit follows it.
 
 | fsync | op | clients | ops/second | p50 ms | p99 ms |
 |---|---|---:|---:|---:|---:|
@@ -154,10 +155,32 @@ warm-up. Windows 10, JDK 23.0.1, 2 CPUs. Relative costs, not production capacity
 | off | GET | 8 | 2692 | 3.39 | 10.48 |
 | off | GET | 32 | 3059 | 6.58 | 44.79 |
 
-What it shows: with fsync on, every write waits for a disk sync on a majority, which caps throughput at a few hundred
-writes per second on this machine (207 with one client, 354 with 32, about 1.7x), because each entry is synced separately
-(batching several entries per sync is not implemented). Turning fsync off is about 5 to 10 times faster but gives up
+What it shows: with fsync on and one entry synced at a time, durable throughput was a few hundred writes per second
+(207 with one client, 354 with 32, about 1.7x). Turning fsync off is about 5 to 10 times faster but gives up
 durability, so `--no-fsync` is for experiments only. A read costs about the same as a write because it goes through the log.
+
+#### With group commit
+The same benchmark run twice back to back on the same machine, once with `--max-batch 1` (group commit off) and once
+with the default. Group commit lets requests that are already waiting share one log write and one sync; it adds no delay.
+
+| fsync | op | clients | group commit OFF ops/s | ON ops/s | p50 ms off -> on | p99 ms off -> on |
+|---|---|---:|---:|---:|---|---|
+| on | SET | 1 | 203 | 201 | 4.65 -> 4.58 | 10.61 -> 14.39 |
+| on | SET | 8 | 246 | 694 | 22.15 -> 7.92 | 311.51 -> 72.33 |
+| on | SET | 32 | 310 | 3982 | 83.57 -> 7.10 | 459.34 -> 20.60 |
+| on | GET | 1 | 251 | 241 | 3.92 -> 4.11 | 7.57 -> 5.64 |
+| on | GET | 8 | 417 | 897 | 17.44 -> 7.62 | 42.15 -> 21.87 |
+| on | GET | 32 | 411 | 3620 | 78.05 -> 7.70 | 156.20 -> 24.86 |
+| off | SET | 1 | 1008 | 768 | 0.49 -> 0.55 | 4.64 -> 10.56 |
+| off | SET | 8 | 2202 | 4373 | 2.75 -> 1.01 | 23.58 -> 9.19 |
+| off | SET | 32 | 1857 | 8901 | 15.30 -> 3.27 | 103.47 -> 11.49 |
+| off | GET | 1 | 2553 | 2297 | 0.33 -> 0.35 | 0.60 -> 0.65 |
+| off | GET | 8 | 2650 | 7059 | 3.41 -> 0.94 | 9.30 -> 4.20 |
+| off | GET | 32 | 2382 | 9813 | 14.40 -> 3.01 | 73.38 -> 5.88 |
+
+With fsync on, 32 clients went from 310 to 3,982 SET/s (about 13x) and p50 from 83.6 ms to 7.1 ms; with one client there is
+no gain (203 vs 201), which is expected. Single run per setting on one machine; the one fsync-off, single-client SET cell
+got slower (1,008 to 768) and was not investigated. Design, safety rules and tests: [docs/GROUP_COMMIT.md](docs/GROUP_COMMIT.md).
 
 ## Metrics
 Both server modes can serve Prometheus-format metrics at `http://127.0.0.1:PORT/metrics` with `--metrics-port PORT`
@@ -171,7 +194,7 @@ requests by outcome. Latency percentiles are bucket-edge estimates of server-sid
 ```bash
 mvn clean test
 ```
-413 tests, 0 failures at the time of writing, run on every push by GitHub Actions.
+436 tests, 0 failures at the time of writing, run on every push by GitHub Actions.
 
 ## Benchmarks
 Single-node cache throughput uses JMH:
@@ -236,8 +259,8 @@ cluster has not been tested on separate machines or under real network faults be
 - Not formally verified or model-checked.
 - No TLS or encryption for peer or client traffic in this mode (the single server has TLS). Use a trusted network or a tunnel.
 - Reads go through the log, so they cost as much as writes. There is no read-index or lease optimisation.
-- Each log entry is synced to disk separately; there is no group commit, which is why durable throughput is a few
-  hundred writes per second in the benchmark above.
+- Group commit batches only requests that are already waiting (there is no deliberate delay), so a single client still
+  pays one sync per write (measured: no gain with one client).
 - No snapshots or log compaction: disk use and restart time grow with the number of writes.
 - The group is fixed: servers cannot be added or removed while it runs. There is no data migration.
 - Tested on one machine only. Failover time and throughput on separate machines or a real network are unmeasured.
@@ -255,7 +278,8 @@ cluster has not been tested on separate machines or under real network faults be
 - Done: a TCP runtime so the replicated cache runs as separate server processes, with the kill-the-leader demo and a
   measured benchmark
 - Done: Prometheus metrics for both server modes
+- Done: group commit for the Raft log, measured before and after (docs/GROUP_COMMIT.md)
 - Done: opt-in buffered reads with a before/after JMH comparison (docs/READ_BUFFER.md); not yet exposed as a server flag
-- Not started (ideas, in the order I would do them): group commit for the Raft log; measuring the hit-ratio cost of buffered
+- Not started (ideas, in the order I would do them): measuring the hit-ratio cost of buffered
   reads; log snapshots and compaction; read-index reads; TLS for the replicated mode; a test on separate machines
 - Dropped: a separate failover monitor process (Raft elects its own leader) and data migration on membership changes

@@ -25,6 +25,7 @@ final class NodeRuntime implements AutoCloseable {
     private final RaftNode node;
     private final ReplicatedCache cache;
     private final long tickMillis;
+    private final int maxBatch;
     private final Runnable onFatal;
     private final LinkedBlockingQueue<Runnable> tasks = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     private final Thread thread;
@@ -41,9 +42,20 @@ final class NodeRuntime implements AutoCloseable {
     private volatile long leaderChanges; // times this node saw its known leader change (including to "none" and back)
     private volatile long timesLeader;   // times this node became leader
 
-    NodeRuntime(RaftNode node, ReplicatedCache cache, long tickMillis, Runnable onFatal) {
+    /**
+     * @param maxBatch group commit: the loop runs at most this many queued tasks in a row, without waiting, and proposes the client writes among them with ONE log append (one
+     *     fsync). 1 turns group commit off: every request is proposed and fsynced alone.
+     */
+    NodeRuntime(RaftNode node, ReplicatedCache cache, long tickMillis, int maxBatch, Runnable onFatal) {
         if (tickMillis <= 0) {
             throw new IllegalArgumentException("tickMillis must be positive");
+        }
+        if (maxBatch <= 0) {
+            throw new IllegalArgumentException("maxBatch must be positive");
+        }
+        this.maxBatch = maxBatch;
+        if (maxBatch > 1) {
+            cache.setBatching(true);
         }
         this.node = node;
         this.cache = cache;
@@ -133,6 +145,14 @@ final class NodeRuntime implements AutoCloseable {
         return timesLeader;
     }
 
+    long proposalBatches() {
+        return cache.batchesProposed();
+    }
+
+    long proposedEntries() {
+        return cache.entriesBatched();
+    }
+
     boolean failed() {
         return failed;
     }
@@ -145,6 +165,16 @@ final class NodeRuntime implements AutoCloseable {
                 Runnable task = waitNanos > 0 ? tasks.poll(waitNanos, TimeUnit.NANOSECONDS) : tasks.poll();
                 if (task != null) {
                     task.run();
+                    // Group commit: whatever else is already waiting joins this batch, without any added delay. While
+                    // the previous batch was being fsynced, more requests queued up, so the load itself forms batches.
+                    for (int more = 1; more < maxBatch; more++) {
+                        Runnable next = tasks.poll();
+                        if (next == null) {
+                            break;
+                        }
+                        next.run();
+                    }
+                    cache.flush();
                 }
                 if (System.nanoTime() >= nextTick) {
                     node.tick();

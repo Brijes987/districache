@@ -28,6 +28,7 @@ final class TestCluster implements AutoCloseable {
     final byte[] clientSecret;
     final boolean fsync;
     final boolean checkQuorum;
+    int maxBatch = ReplicatedServer.DEFAULT_MAX_BATCH; // set before start()
 
     TestCluster(int n) throws IOException {
         this(n, null, null, false);
@@ -64,7 +65,7 @@ final class TestCluster implements AutoCloseable {
     }
 
     void start(int i) throws IOException {
-        ReplicatedServer s = new ReplicatedServer(config(i));
+        ReplicatedServer s = new ReplicatedServer(config(i)).setMaxBatch(maxBatch);
         s.start();
         servers[i] = s;
     }

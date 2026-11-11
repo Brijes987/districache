@@ -19,7 +19,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * relative costs (durable versus not, one client versus many), not a statement about production capacity. There is no
  * comparison with other systems here because none was measured.
  *
- * <p>Run: {@code java -cp target/classes com.distri.cache.node.ClusterBenchmark [--seconds N]} (default 5 per cell).
+ * <p>Run: {@code java -cp target/classes com.distri.cache.node.ClusterBenchmark [--seconds N] [--max-batch N]} (default 5 per cell;
+ * {@code --max-batch 1} switches group commit off, for the before/after comparison).
  */
 public final class ClusterBenchmark {
 
@@ -27,16 +28,21 @@ public final class ClusterBenchmark {
 
     public static void main(String[] args) throws Exception {
         int seconds = 5;
+        int maxBatch = 0; // server default
         for (int i = 0; i < args.length; i++) {
             if (args[i].equals("--seconds")) {
                 seconds = Integer.parseInt(args[++i]);
+            } else if (args[i].equals("--max-batch")) {
+                maxBatch = Integer.parseInt(args[++i]);
             } else {
-                System.err.println("usage: ClusterBenchmark [--seconds N]");
+                System.err.println("usage: ClusterBenchmark [--seconds N] [--max-batch N]");
                 System.exit(2);
             }
         }
         System.out.println("3 server processes + clients on one machine, loopback TCP, 100-byte values, "
-                + seconds + " s per cell after 1 s warm-up");
+                + seconds + " s per cell after 1 s warm-up, group commit "
+                + (maxBatch == 0 ? "at the server default (" + ReplicatedServer.DEFAULT_MAX_BATCH + ")"
+                        : maxBatch == 1 ? "OFF (--max-batch 1)" : "--max-batch " + maxBatch));
         System.out.println("java " + System.getProperty("java.version") + ", " + Runtime.getRuntime().availableProcessors()
                 + " CPUs, " + System.getProperty("os.name"));
         System.out.println();
@@ -44,7 +50,7 @@ public final class ClusterBenchmark {
                 "p99 ms", "max ms");
         for (boolean fsync : new boolean[] {true, false}) {
             Path root = Files.createTempDirectory("districache-bench");
-            try (ClusterLauncher cluster = new ClusterLauncher(3, root, fsync)) {
+            try (ClusterLauncher cluster = new ClusterLauncher(3, root, fsync, maxBatch)) {
                 cluster.startAll();
                 try (ReplicatedClient warm = cluster.newClient(30_000)) {
                     warm.set("warmup", "x");

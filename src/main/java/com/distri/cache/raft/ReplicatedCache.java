@@ -2,8 +2,10 @@ package com.distri.cache.raft;
 
 import com.distri.cache.CacheSnapshotEntry;
 import com.distri.cache.LRUCache;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
@@ -62,6 +64,8 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
 
     private record Pending(long term, long clientId, long seq, CompletableFuture<Reply> future) {}
 
+    private record Queued(CacheCommand command, byte[] encoded, CompletableFuture<Reply> future) {}
+
     private record Stashed(long clientId, long seq, Reply result) {}
 
     private final LRUCache<String, String> cache;
@@ -72,6 +76,11 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
     private final Map<Long, Stashed> stash = new HashMap<>();
     private final Map<String, Integer> executions; // null unless tracking is on (tests)
     private boolean submitting;
+    private boolean batching;
+    private volatile long batchesProposed;  // written by the owner thread only; readable by metrics
+    private volatile long entriesBatched;
+    private volatile long largestBatch;
+    private final List<Queued> queued = new ArrayList<>();
     private RaftNode node;
     private Fault fault;
 
@@ -93,6 +102,92 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
     /** Switches on a deliberate bug. For tests only; not reachable from outside the package. */
     void injectFault(Fault fault) {
         this.fault = fault;
+    }
+
+    /**
+     * Group commit. With batching on, a request is not proposed at once: it waits in a queue until {@link #flush()},
+     * which writes everything queued with one log append (one fsync). The caller (the node's single thread) should
+     * run a batch of queued tasks and then call {@code flush()}. Off by default, so every request is proposed alone.
+     */
+    public void setBatching(boolean on) {
+        if (!on && !queued.isEmpty()) {
+            throw new IllegalStateException("flush() before switching batching off");
+        }
+        this.batching = on;
+    }
+
+    /** Number of {@link #flush()} calls that wrote at least one entry (each is one log append, one fsync). */
+    public long batchesProposed() {
+        return batchesProposed;
+    }
+
+    /** Total requests written through {@link #flush()}; divided by {@link #batchesProposed()} is the mean batch. */
+    public long entriesBatched() {
+        return entriesBatched;
+    }
+
+    public long largestBatch() {
+        return largestBatch;
+    }
+
+    /** How many requests are waiting for {@link #flush()}. */
+    public int queuedCount() {
+        return queued.size();
+    }
+
+    /**
+     * Proposes every queued request as one batch. Each request's future completes only once its own entry is
+     * committed and applied (never earlier), or with NOT_LEADER / UNKNOWN if leadership is lost first.
+     */
+    public void flush() {
+        if (queued.isEmpty()) {
+            return;
+        }
+        List<Queued> batch = new ArrayList<>(queued);
+        queued.clear();
+        if (node.role() != RaftNode.Role.LEADER) { // demoted between submit and flush
+            for (Queued q : batch) {
+                q.future().complete(new Reply(Kind.NOT_LEADER, false, null, node.leaderId()));
+            }
+            return;
+        }
+        // Register the waiting futures BEFORE proposing: in a one-server group the entries commit and are applied
+        // inside proposeBatch, and apply() must already find them. The indexes are known: they follow the log's end.
+        long first = node.lastLogIndex() + 1;
+        long term = node.term();
+        for (int i = 0; i < batch.size(); i++) {
+            Queued q = batch.get(i);
+            pending.put(first + i, new Pending(term, q.command().clientId(), q.command().seq(), q.future()));
+        }
+        List<byte[]> encoded = new ArrayList<>(batch.size());
+        for (Queued q : batch) {
+            encoded.add(q.encoded());
+        }
+        RaftNode.ProposeResult r;
+        try {
+            r = node.proposeBatch(encoded);
+        } catch (RuntimeException e) {
+            for (int i = 0; i < batch.size(); i++) {
+                pending.remove(first + i);
+            }
+            throw e;
+        }
+        if (r.accepted()) {
+            batchesProposed++;
+            entriesBatched += batch.size();
+            if (batch.size() > largestBatch) {
+                largestBatch = batch.size();
+            }
+        }
+        if (!r.accepted() || r.index() != first) { // cannot happen on the owner thread; never guess if it does
+            for (int i = 0; i < batch.size(); i++) {
+                pending.remove(first + i);
+            }
+            Reply reply = r.accepted() ? unknown() : new Reply(Kind.NOT_LEADER, false, null, r.leaderHint());
+            for (Queued q : batch) {
+                q.future().complete(reply);
+            }
+        }
     }
 
     /** Connects this state machine to the Raft node that feeds it. Needed before any request is submitted. */
@@ -136,6 +231,14 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
     private CompletableFuture<Reply> submit(CacheCommand command) {
         if (node == null) {
             throw new IllegalStateException("not attached to a RaftNode");
+        }
+        if (batching && fault != Fault.ACK_BEFORE_COMMIT) {
+            if (node.role() != RaftNode.Role.LEADER) {
+                return CompletableFuture.completedFuture(new Reply(Kind.NOT_LEADER, false, null, node.leaderId()));
+            }
+            CompletableFuture<Reply> future = new CompletableFuture<>();
+            queued.add(new Queued(command, command.encode(), future));
+            return future;
         }
         RaftNode.ProposeResult r;
         stash.clear();
@@ -187,6 +290,10 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
 
     /** Fails everything in flight, for example when this server is shutting down. */
     public void abandonPending() {
+        for (Queued q : queued) {
+            q.future().complete(unknown());
+        }
+        queued.clear();
         for (Pending p : pending.values()) {
             p.future().complete(unknown());
         }

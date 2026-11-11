@@ -69,6 +69,14 @@ final class NodeMetrics {
                 () -> with(server, NodeRuntime::leaderChanges));
         registry.gauge("districache_raft_times_became_leader", "Times this server became leader since start.",
                 () -> with(server, NodeRuntime::timesLeader));
+        registry.gauge("districache_raft_proposal_batches",
+                "Log appends made by this server as leader for client requests (each is one fsync); only grows. "
+                        + "Needs group commit (--max-batch above 1), otherwise stays 0.",
+                () -> with(server, NodeRuntime::proposalBatches));
+        registry.gauge("districache_raft_proposed_entries",
+                "Client requests written to the log through those batches; proposed_entries / proposal_batches is the "
+                        + "mean batch size.",
+                () -> with(server, NodeRuntime::proposedEntries));
         registry.gauge("districache_raft_failed", "1 if the node stopped itself after an internal error (fail-stop).",
                 () -> server.failed() ? 1 : 0);
     }
