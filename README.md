@@ -18,6 +18,7 @@ Everything stated here is backed by a test or a measurement in this repository. 
 [Known limitations](#known-limitations).
 
 ## Contents
+- [Architecture](#architecture)
 - [Quick start](#quick-start)
 - [The cache](#the-cache)
 - [Single server (Redis protocol)](#single-server-redis-protocol)
@@ -29,6 +30,21 @@ Everything stated here is backed by a test or a measurement in this repository. 
 - [Testing](#testing)
 - [Known limitations](#known-limitations)
 - [Roadmap](#roadmap)
+
+## Architecture
+The two server modes, the inside of a Raft node, the write path and snapshot catch-up are drawn in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Overview:
+
+```mermaid
+flowchart LR
+    C["Clients"] -- RESP --> S["Single server<br/>CacheServer + ShardedLRUCache<br/>AOF + async replicas"]
+    RC["ReplicatedClient"] --> L
+    subgraph R["Raft cluster"]
+        L["Leader"] -- AppendEntries / InstallSnapshot --> F1["Follower"]
+        L --> F2["Follower"]
+    end
+    L --- D[("raft.log + raft.snapshot")]
+```
 
 ## Quick start
 Requires Java 17+ and Maven.
