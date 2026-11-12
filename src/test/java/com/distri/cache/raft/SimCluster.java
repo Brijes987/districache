@@ -59,6 +59,24 @@ final class SimCluster {
         }
 
         @Override
+        public byte[] snapshot() {
+            byte[] inner = delegate == null ? new byte[0] : delegate.snapshot();
+            return java.nio.ByteBuffer.allocate(8 + inner.length).putLong(lastIndex).put(inner).array();
+        }
+
+        @Override
+        public void restore(byte[] state) {
+            java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(state);
+            long index = buf.getLong();
+            byte[] inner = new byte[buf.remaining()];
+            buf.get(inner);
+            if (delegate != null) {
+                delegate.restore(inner);
+            }
+            lastIndex = index;
+        }
+
+        @Override
         public void apply(long index, byte[] command) {
             if (index <= lastIndex) {
                 throw new AssertionError("state machine applied index " + index + " after " + lastIndex);
@@ -77,7 +95,7 @@ final class SimCluster {
     final Random random;                // network and chaos randomness (separate from the nodes' timers)
     long now;
 
-    private final RaftStorage[] storages;
+    private final AuditStorage[] storages;
     private final RaftNode[] nodes;
     private final RecordingStateMachine[] machines;
     private final boolean[][] cut;
@@ -100,6 +118,7 @@ final class SimCluster {
     private final long[] lastCommitIndex;
     private final List<List<LogEntry>> leaderPrefix;
     private final long[] leaderPrefixTerm;
+    private final long[] leaderPrefixBase;
     private final Map<Long, String> appliedAt = new HashMap<>();
     private final Deque<String> events = new ArrayDeque<>();
     private int stepsSinceDeepCheck;
@@ -118,7 +137,7 @@ final class SimCluster {
         this.seed = seed;
         this.config = config;
         this.random = new Random(seed);
-        this.storages = new RaftStorage[n];
+        this.storages = new AuditStorage[n];
         this.nodes = new RaftNode[n];
         this.machines = new RecordingStateMachine[n];
         this.cut = new boolean[n][n];
@@ -127,8 +146,9 @@ final class SimCluster {
         this.lastCommitIndex = new long[n];
         this.leaderPrefix = new ArrayList<>();
         this.leaderPrefixTerm = new long[n];
+        this.leaderPrefixBase = new long[n];
         for (int i = 0; i < n; i++) {
-            storages[i] = new InMemoryRaftStorage();
+            storages[i] = new AuditStorage(new InMemoryRaftStorage());
             leaderPrefix.add(null);
             start(i);
         }
@@ -145,7 +165,7 @@ final class SimCluster {
         }
         RaftStorage opened = factory == null ? null : factory.openStorage(i);
         if (opened != null) {
-            storages[i] = opened;
+            storages[i] = new AuditStorage(opened);
         }
         machines[i] = new RecordingStateMachine(factory == null ? null : factory.create(i));
         nodes[i] = new RaftNode(i, peers, storages[i], (to, message) -> send(i, to, message), machines[i], config,
@@ -153,8 +173,8 @@ final class SimCluster {
         if (factory != null) {
             factory.started(i, nodes[i]);
         }
-        checkedCommit[i] = 0;
-        lastCommitIndex[i] = 0;
+        checkedCommit[i] = nodes[i].commitIndex(); // a restart from a snapshot begins at its index
+        lastCommitIndex[i] = nodes[i].commitIndex();
         leaderPrefix.set(i, null);
     }
 
@@ -366,7 +386,10 @@ final class SimCluster {
 
         // commit agreement: record what each node commits, and compare
         for (long idx = checkedCommit[i] + 1; idx <= node.commitIndex(); idx++) {
-            LogEntry entry = storages[i].entry(idx);
+            LogEntry entry = storages[i].historic(idx);
+            if (entry == null) {
+                continue; // covered by a snapshot installed from a leader: this node never held the entry
+            }
             LogEntry known = committed.get(idx);
             if (known == null) {
                 committed.put(idx, entry);
@@ -402,8 +425,10 @@ final class SimCluster {
         RaftNode node = nodes[i];
         for (Map.Entry<Long, LogEntry> e : committed.entrySet()) {
             long idx = e.getKey();
-            if (committedInTerm.get(idx) < node.term()
-                    && (idx > storages[i].lastIndex() || !storages[i].entry(idx).equals(e.getValue()))) {
+            LogEntry mine = idx <= storages[i].lastIndex() ? storages[i].historic(idx) : null;
+            boolean unknownToMe = idx <= storages[i].lastIndex() && mine == null; // inside a snapshot it was sent
+            if (committedInTerm.get(idx) < node.term() && !unknownToMe
+                    && (idx > storages[i].lastIndex() || !mine.equals(e.getValue()))) {
                 throw violation("leader " + i + " of term " + node.term() + " lacks entry " + idx + " "
                         + e.getValue() + " committed in term " + committedInTerm.get(idx));
             }
@@ -434,13 +459,17 @@ final class SimCluster {
                 long common = Math.min(storages[a].lastIndex(), storages[b].lastIndex());
                 long matchAt = 0;
                 for (long idx = common; idx >= 1; idx--) {
-                    if (storages[a].termAt(idx) == storages[b].termAt(idx)) {
+                    LogEntry ea = storages[a].historic(idx);
+                    LogEntry eb = storages[b].historic(idx);
+                    if (ea != null && eb != null && ea.term() == eb.term()) {
                         matchAt = idx;
                         break;
                     }
                 }
                 for (long idx = 1; idx <= matchAt; idx++) {
-                    if (!storages[a].entry(idx).equals(storages[b].entry(idx))) {
+                    LogEntry ea = storages[a].historic(idx);
+                    LogEntry eb = storages[b].historic(idx);
+                    if (ea != null && eb != null && !ea.equals(eb)) {
                         throw violation("log matching broken between nodes " + a + " and " + b + " at index " + idx
                                 + " (they agree at " + matchAt + ")");
                     }
@@ -454,13 +483,22 @@ final class SimCluster {
                 continue;
             }
             List<LogEntry> log = node.logCopy();
+            long logBase = storages[i].snapshotIndex();
             List<LogEntry> before = leaderPrefix.get(i);
             if (before != null && leaderPrefixTerm[i] == node.term()) {
-                if (log.size() < before.size() || !log.subList(0, before.size()).equals(before)) {
-                    throw violation("leader " + i + " changed its log within term " + node.term());
+                long beforeLast = leaderPrefixBase[i] + before.size();
+                if (logBase + log.size() < beforeLast) {
+                    throw violation("leader " + i + " shortened its log within term " + node.term());
+                }
+                // the leader may have compacted its log meanwhile: compare the indexes both versions still hold
+                for (long idx = Math.max(logBase, leaderPrefixBase[i]) + 1; idx <= beforeLast; idx++) {
+                    if (!log.get((int) (idx - logBase - 1)).equals(before.get((int) (idx - leaderPrefixBase[i] - 1)))) {
+                        throw violation("leader " + i + " changed its log within term " + node.term());
+                    }
                 }
             }
             leaderPrefix.set(i, log);
+            leaderPrefixBase[i] = logBase;
             leaderPrefixTerm[i] = node.term();
         }
     }
@@ -485,7 +523,7 @@ final class SimCluster {
         for (int i = 0; i < n; i++) {
             h = 31 * h + storages[i].currentTerm();
             h = 31 * h + storages[i].lastIndex();
-            for (long idx = 1; idx <= storages[i].lastIndex(); idx++) {
+            for (long idx = storages[i].snapshotIndex() + 1; idx <= storages[i].lastIndex(); idx++) {
                 h = 31 * h + storages[i].entry(idx).hashCode();
             }
         }

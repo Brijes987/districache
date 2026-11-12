@@ -29,6 +29,7 @@ final class TestCluster implements AutoCloseable {
     final boolean fsync;
     final boolean checkQuorum;
     int maxBatch = ReplicatedServer.DEFAULT_MAX_BATCH; // set before start()
+    int snapshotEvery;                                 // set before start(); 0 = snapshots off
 
     TestCluster(int n) throws IOException {
         this(n, null, null, false);
@@ -60,7 +61,7 @@ final class TestCluster implements AutoCloseable {
     ReplicatedServer.Config config(int i) {
         return ReplicatedServer.Config.of(i, members, root.resolve("node" + i))
                 .withSecrets(peerSecret, clientSecret)
-                .withTiming(new RaftConfig(20, 40, 4, 64, checkQuorum, Set.of()), 5)
+                .withTiming(new RaftConfig(20, 40, 4, 64, checkQuorum, Set.of(), snapshotEvery), 5)
                 .withFsync(fsync);
     }
 

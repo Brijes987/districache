@@ -10,7 +10,8 @@ import java.util.Set;
 
 /**
  * One server of a Raft group: leader election, log replication and commit, as in "In Search of an Understandable
- * Consensus Algorithm" (Ongaro and Ousterhout), without log compaction and without membership changes.
+ * Consensus Algorithm" (Ongaro and Ousterhout), including log compaction by snapshots (section 7) but without
+ * membership changes.
  *
  * <p>The node is a plain state machine. It owns no threads, sockets or clocks: the caller supplies time as calls to
  * {@link #tick()} and incoming messages as calls to {@link #receive}, and gets outgoing messages through the
@@ -23,7 +24,7 @@ import java.util.Set;
  *
  * <p>Also included: a new leader appends a no-op entry so that entries of earlier terms become committed; a leader
  * that cannot hear from a majority for an election timeout steps down (check-quorum). Not included: pre-vote,
- * snapshots, membership changes, and read-only queries that avoid the log.
+ * membership changes, chunked snapshot transfer (a snapshot travels in one message), and read-only queries that avoid the log.
  */
 public final class RaftNode {
 
@@ -59,6 +60,11 @@ public final class RaftNode {
     private final Map<Integer, Long> matchIndex = new HashMap<>();
     private final Set<Integer> heardFrom = new HashSet<>();
     private int quorumElapsed;
+    private long ticks;
+    private final Map<Integer, Long> snapshotSentAt = new HashMap<>();
+    private long snapshotsTaken;
+    private long snapshotsInstalled;
+    private long snapshotsSkipped;
 
     /**
      * @param peers the ids of the OTHER servers in the group (the group has {@code peers.size() + 1} servers)
@@ -79,6 +85,12 @@ public final class RaftNode {
         this.random = random;
         this.currentTerm = storage.currentTerm();
         this.votedFor = storage.votedFor();
+        RaftStorage.Snapshot snapshot = storage.snapshot();
+        if (snapshot != null) {
+            stateMachine.restore(snapshot.state()); // the log before this point is gone; the snapshot is the state
+            commitIndex = snapshot.index();
+            lastApplied = snapshot.index();
+        }
         resetElectionTimer();
     }
 
@@ -113,10 +125,31 @@ public final class RaftNode {
         return storage.lastIndex();
     }
 
+    /** Index of the last log entry covered by this node's snapshot, 0 if it has none. */
+    public long snapshotIndex() {
+        return storage.snapshotIndex();
+    }
+
+    /** Snapshots this node took itself since it started. */
+    public long snapshotsTaken() {
+        return snapshotsTaken;
+    }
+
+    /** Snapshots this node received from a leader and installed since it started. */
+    public long snapshotsInstalled() {
+        return snapshotsInstalled;
+    }
+
+    /** Times a snapshot was due but the state was too large to snapshot. */
+    public long snapshotsSkipped() {
+        return snapshotsSkipped;
+    }
+
     // ------------------------------------------------------------------ inputs
 
     /** One unit of time has passed. */
     public void tick() {
+        ticks++;
         if (role == Role.LEADER) {
             heartbeatElapsed++;
             if (heartbeatElapsed >= config.heartbeatTicks()) {
@@ -197,6 +230,8 @@ public final class RaftNode {
             onAppendEntries(from, m);
         } else if (message instanceof RaftMessage.AppendEntriesReply m) {
             onAppendEntriesReply(from, m);
+        } else if (message instanceof RaftMessage.InstallSnapshot m) {
+            onInstallSnapshot(from, m);
         }
     }
 
@@ -303,15 +338,27 @@ public final class RaftNode {
         leaderId = m.leaderId();
         electionElapsed = 0;
 
+        long prevIndex = m.prevLogIndex();
+        long prevTerm = m.prevLogTerm();
+        List<LogEntry> entries = m.entries();
+        long base = storage.snapshotIndex();
+        if (prevIndex < base) {
+            // The leader starts before this node's snapshot. Everything up to the snapshot is committed, so the leader
+            // holds it too and it matches: skip those entries and continue from the snapshot point.
+            long gap = base - prevIndex;
+            entries = entries.size() >= gap ? entries.subList((int) gap, entries.size()) : List.of();
+            prevIndex = base;
+            prevTerm = storage.snapshotTerm();
+        }
         long lastIndex = storage.lastIndex();
-        if (m.prevLogIndex() > lastIndex) {
+        if (prevIndex > lastIndex) {
             transport.send(from, new RaftMessage.AppendEntriesReply(currentTerm, false, 0, lastIndex + 1, 0));
             return;
         }
-        if (m.prevLogIndex() > 0 && storage.termAt(m.prevLogIndex()) != m.prevLogTerm()) {
-            long conflictTerm = storage.termAt(m.prevLogIndex());
-            long conflictIndex = m.prevLogIndex();
-            while (conflictIndex > 1 && storage.termAt(conflictIndex - 1) == conflictTerm) {
+        if (prevIndex > 0 && storage.termAt(prevIndex) != prevTerm) {
+            long conflictTerm = storage.termAt(prevIndex);
+            long conflictIndex = prevIndex;
+            while (conflictIndex > base + 1 && storage.termAt(conflictIndex - 1) == conflictTerm) {
                 conflictIndex--;
             }
             transport.send(from, new RaftMessage.AppendEntriesReply(currentTerm, false, 0, conflictIndex, conflictTerm));
@@ -319,14 +366,13 @@ public final class RaftNode {
         }
 
         // The entry before the new ones matches. Add the new ones, deleting only what truly conflicts.
-        List<LogEntry> entries = m.entries();
         if (config.faults().contains(RaftConfig.Fault.TRUNCATE_ON_EVERY_APPEND)) {
-            if (storage.lastIndex() > m.prevLogIndex()) {
-                storage.truncateFrom(m.prevLogIndex() + 1);
+            if (storage.lastIndex() > prevIndex) {
+                storage.truncateFrom(prevIndex + 1);
             }
             storage.append(entries);
         } else {
-            long index = m.prevLogIndex();
+            long index = prevIndex;
             for (int i = 0; i < entries.size(); i++) {
                 index++;
                 if (index <= storage.lastIndex()) {
@@ -339,7 +385,7 @@ public final class RaftNode {
                 break;
             }
         }
-        long lastNew = m.prevLogIndex() + entries.size();
+        long lastNew = prevIndex + entries.size();
         long newCommit = config.faults().contains(RaftConfig.Fault.COMMIT_PAST_VERIFIED_ENTRIES)
                 ? Math.min(m.leaderCommit(), storage.lastIndex())
                 : Math.min(m.leaderCommit(), lastNew);
@@ -360,10 +406,53 @@ public final class RaftNode {
 
     private void sendAppend(int peer) {
         long next = nextIndex.get(peer);
+        if (next <= storage.snapshotIndex()) {
+            sendSnapshot(peer); // the entries this follower needs were compacted away
+            return;
+        }
         long prev = next - 1;
         long last = Math.min(storage.lastIndex(), next + config.maxEntriesPerMessage() - 1);
         List<LogEntry> entries = next <= last ? storage.slice(next, last) : List.of();
         transport.send(peer, new RaftMessage.AppendEntries(currentTerm, id, prev, storage.termAt(prev), entries, commitIndex));
+    }
+
+    private void sendSnapshot(int peer) {
+        Long sentAt = snapshotSentAt.get(peer);
+        if (sentAt != null && ticks - sentAt < Math.max(1, config.electionTimeoutMinTicks() / 2)) {
+            return; // one is already on its way; do not flood a slow follower with copies of the whole state
+        }
+        RaftStorage.Snapshot snapshot = storage.snapshot();
+        snapshotSentAt.put(peer, ticks);
+        transport.send(peer, new RaftMessage.InstallSnapshot(currentTerm, id, snapshot.index(), snapshot.term(),
+                snapshot.state()));
+    }
+
+    private void onInstallSnapshot(int from, RaftMessage.InstallSnapshot m) {
+        if (m.term() < currentTerm) {
+            transport.send(from, new RaftMessage.AppendEntriesReply(currentTerm, false, 0, 0, 0));
+            return;
+        }
+        if (role == Role.LEADER) {
+            throw new IllegalStateException("node " + id + " is leader of term " + currentTerm
+                    + " and received InstallSnapshot from " + from + " for the same term");
+        }
+        role = Role.FOLLOWER;
+        leaderId = m.leaderId();
+        electionElapsed = 0;
+
+        long index = m.lastIncludedIndex();
+        if (index <= commitIndex && !config.faults().contains(RaftConfig.Fault.INSTALL_STALE_SNAPSHOT)) {
+            // Everything the snapshot covers is already committed here, so it matches the leader's log. Installing it
+            // would roll the state machine back.
+            transport.send(from, new RaftMessage.AppendEntriesReply(currentTerm, true, index, 0, 0));
+            return;
+        }
+        stateMachine.restore(m.state());     // throws before changing anything if the state is unusable
+        storage.installSnapshot(index, m.lastIncludedTerm(), m.state()); // durable before we acknowledge
+        commitIndex = index;
+        lastApplied = index;
+        snapshotsInstalled++;
+        transport.send(from, new RaftMessage.AppendEntriesReply(currentTerm, true, index, 0, 0));
     }
 
     private void onAppendEntriesReply(int from, RaftMessage.AppendEntriesReply m) {
@@ -392,7 +481,7 @@ public final class RaftNode {
         if (m.conflictTerm() > 0) {
             // If this leader has entries of the follower's conflicting term, resume right after the last of them.
             long lastOfTerm = 0;
-            for (long i = storage.lastIndex(); i >= 1; i--) {
+            for (long i = storage.lastIndex(); i > storage.snapshotIndex(); i--) {
                 long t = storage.termAt(i);
                 if (t == m.conflictTerm()) {
                     lastOfTerm = i;
@@ -437,16 +526,39 @@ public final class RaftNode {
         while (lastApplied < commitIndex) {
             lastApplied++;
             LogEntry entry = storage.entry(lastApplied);
+            boolean snapshotDue = config.snapshotEvery() > 0
+                    && lastApplied - storage.snapshotIndex() >= config.snapshotEvery();
+            byte[] early = snapshotDue && config.faults().contains(RaftConfig.Fault.SNAPSHOT_BEFORE_APPLY)
+                    ? snapshotState() : null;
             if (!entry.isNoop()) {
                 stateMachine.apply(lastApplied, entry.command());
             }
+            if (snapshotDue) {
+                takeSnapshot(early);
+            }
         }
+    }
+
+    private byte[] snapshotState() {
+        byte[] state = stateMachine.snapshot();
+        return state.length > RaftStorage.MAX_SNAPSHOT_BYTES ? null : state;
+    }
+
+    /** Records the state as of {@code lastApplied} and drops the log entries it covers. */
+    private void takeSnapshot(byte[] precomputed) {
+        byte[] state = precomputed != null ? precomputed : snapshotState();
+        if (state == null) {
+            snapshotsSkipped++; // too large to send in one message: keep the log instead
+            return;
+        }
+        storage.installSnapshot(lastApplied, storage.termAt(lastApplied), state);
+        snapshotsTaken++;
     }
 
     /** For diagnostics and tests. */
     List<LogEntry> logCopy() {
         List<LogEntry> out = new ArrayList<>();
-        for (long i = 1; i <= storage.lastIndex(); i++) {
+        for (long i = storage.snapshotIndex() + 1; i <= storage.lastIndex(); i++) {
             out.add(storage.entry(i));
         }
         return out;

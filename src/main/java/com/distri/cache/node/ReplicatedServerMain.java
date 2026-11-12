@@ -20,6 +20,8 @@ import java.util.Map;
  * --no-fsync                   do not force writes to disk (FASTER, NOT DURABLE: only for experiments)
  * --max-batch N               group commit: up to N queued client requests share one log write and fsync
  *                              (default 256; 1 = every request is fsynced alone)
+ * --snapshot-every N          snapshot the cache and drop the log it covers after every N applied entries
+ *                              (default 10000; 0 = never: the log then grows without bound)
  * --metrics-port P             serve Prometheus metrics at http://127.0.0.1:P/metrics (--metrics-host H to bind elsewhere;
  *                              no authentication or TLS)
  * </pre>
@@ -42,6 +44,7 @@ public final class ReplicatedServerMain {
         int capacity = 10_000;
         boolean fsync = true;
         int maxBatch = ReplicatedServer.DEFAULT_MAX_BATCH;
+        int snapshotEvery = 10_000;
         String metricsHost = "127.0.0.1";
         int metricsPort = -1;
         try {
@@ -56,6 +59,7 @@ public final class ReplicatedServerMain {
                     case "--capacity" -> capacity = Integer.parseInt(value(args, ++i));
                     case "--no-fsync" -> fsync = false;
                     case "--max-batch" -> maxBatch = Integer.parseInt(value(args, ++i));
+                    case "--snapshot-every" -> snapshotEvery = Integer.parseInt(value(args, ++i));
                     case "--metrics-port" -> metricsPort = Integer.parseInt(value(args, ++i));
                     case "--metrics-host" -> metricsHost = value(args, ++i);
                     default -> throw new IllegalArgumentException("unknown option " + args[i]);
@@ -67,7 +71,7 @@ public final class ReplicatedServerMain {
         } catch (IllegalArgumentException e) {
             System.err.println("error: " + e.getMessage());
             System.err.println("usage: ReplicatedServerMain --id N --members 0=host:peerPort:clientPort,... --data DIR"
-                    + " [--peer-secret-file F] [--client-secret-file F] [--tick-ms N] [--capacity N] [--no-fsync] [--max-batch N]"
+                    + " [--peer-secret-file F] [--client-secret-file F] [--tick-ms N] [--capacity N] [--no-fsync] [--max-batch N] [--snapshot-every N]"
                     + " [--metrics-port P [--metrics-host H]]");
             System.exit(2);
             return;
@@ -77,7 +81,7 @@ public final class ReplicatedServerMain {
         ReplicatedServer.Config base = ReplicatedServer.Config.of(id, members, Path.of(dataDir)).withFsync(fsync);
         ReplicatedServer.Config config = new ReplicatedServer.Config(base.id(), base.members(), base.dataDir(),
                 readSecret(peerSecretFile), readSecret(clientSecretFile),
-                new com.distri.cache.raft.RaftConfig(30, 60, 6, 64, true, java.util.Set.of()), tickMillis, fsync,
+                new com.distri.cache.raft.RaftConfig(30, 60, 6, 64, true, java.util.Set.of(), snapshotEvery), tickMillis, fsync,
                 capacity, base.requestTimeoutMillis());
         if (!fsync) {
             System.err.println("WARNING: --no-fsync: acknowledged writes can be lost if the machine loses power.");

@@ -24,7 +24,12 @@ import java.util.zip.CRC32;
  *   <li>{@code raft.meta}: term (8 bytes), votedFor (4), CRC-32 of those 12 bytes (4). Replaced with
  *       write-temp, force, atomic rename, so it is either the old or the new value, never a mixture.</li>
  *   <li>{@code raft.log}: records of {@code length (4) | CRC-32 of body (4) | body}, where the body is
- *       {@code term (8) | command bytes}.</li>
+ *       {@code term (8) | command bytes}. A log that has been compacted starts with a 16-byte header
+ *       {@code magic (4) | base index (8) | CRC-32 (4)}; its first record is entry {@code base + 1}. A file without
+ *       the header is a log that starts at entry 1.</li>
+ *   <li>{@code raft.snapshot}: {@code magic (4) | index (8) | term (8) | length (4) | state | CRC-32 (4)}, replaced
+ *       with write-temp, force, atomic rename. Written BEFORE the log is compacted, so a crash in between leaves
+ *       a snapshot and a longer log, and opening finishes the compaction.</li>
  * </ul>
  *
  * <p>Recovery on open: a record cut off at the end (crash during an append), a last record whose checksum fails, or a
@@ -32,21 +37,29 @@ import java.util.zip.CRC32;
  * cannot be a torn write, so opening fails instead of silently discarding the rest of the log.
  *
  * <p>Limits: an I/O error throws {@link UncheckedIOException}; the node must stop (fail-stop) because it can no longer
- * keep its promises. This class is not thread-safe, like {@link RaftNode}. The whole log is also kept in memory, and the
- * log is never compacted, so it grows without bound. Whether {@code force} really reaches the platters depends on the
+ * keep its promises. This class is not thread-safe, like {@link RaftNode}. The whole (uncompacted) log is also kept in
+ * memory; {@link #installSnapshot} is what keeps it, and the file, from growing without bound. Whether {@code force} really reaches the platters depends on the
  * disk and file system; this has been tested with simulated torn and corrupted files, not with power loss.
  */
 public final class FileRaftStorage implements RaftStorage, AutoCloseable {
 
     static final int MAX_COMMAND_BYTES = 16 * 1024 * 1024;
     private static final int HEADER = 8;
+    private static final int LOG_MAGIC = 0x52414654;      // "RAFT"; larger than any valid record length
+    private static final int SNAPSHOT_MAGIC = 0x52534e50; // "RSNP"
+    private static final int LOG_HEADER = 16;
 
     private final Path dir;
     private final boolean fsync;
     private final Path metaFile;
-    private final FileChannel logChannel;
-    private final List<LogEntry> entries = new ArrayList<>();
+    private final Path logFile;
+    private final Path snapshotFile;
+    private FileChannel logChannel;
+    private final List<LogEntry> entries = new ArrayList<>(); // entry at index i is entries.get(i - base - 1)
     private final List<Long> offsets = new ArrayList<>(); // start position of each record
+    private long base;          // index of the last entry covered by the snapshot (0: none)
+    private long baseTerm;
+    private long logBase;       // base index recorded in the log file's header (0 without one)
     private long endOffset;
     private long term;
     private int votedFor = -1;
@@ -67,11 +80,22 @@ public final class FileRaftStorage implements RaftStorage, AutoCloseable {
         Files.createDirectories(dir);
         this.metaFile = dir.resolve("raft.meta");
         Files.deleteIfExists(dir.resolve("raft.meta.tmp"));
+        Files.deleteIfExists(dir.resolve("raft.snapshot.tmp"));
+        Files.deleteIfExists(dir.resolve("raft.log.tmp"));
+        this.logFile = dir.resolve("raft.log");
+        this.snapshotFile = dir.resolve("raft.snapshot");
         loadMeta();
-        this.logChannel = FileChannel.open(dir.resolve("raft.log"), StandardOpenOption.CREATE,
+        loadSnapshotHeader();
+        this.logChannel = FileChannel.open(logFile, StandardOpenOption.CREATE,
                 StandardOpenOption.READ, StandardOpenOption.WRITE);
         try {
             loadLog();
+            if (base > logBase) {
+                finishInterruptedCompaction();
+            } else if (base < logBase) {
+                throw new IOException("raft.log starts after entry " + logBase + " but the newest snapshot only covers "
+                        + base + ": the snapshot file is missing or old, refusing to guess");
+            }
         } catch (IOException | RuntimeException e) {
             logChannel.close();
             throw e;
@@ -159,6 +183,22 @@ public final class FileRaftStorage implements RaftStorage, AutoCloseable {
         }
         byte[] data = all.array();
         long pos = 0;
+        logBase = 0;
+        if (size >= 4 && ByteBuffer.wrap(data, 0, 4).getInt() == LOG_MAGIC) {
+            if (size < LOG_HEADER) {
+                throw new IOException("raft.log header is cut short: refusing to guess");
+            }
+            ByteBuffer h = ByteBuffer.wrap(data, 0, LOG_HEADER);
+            h.getInt();
+            long b = h.getLong();
+            int crc = h.getInt();
+            if (crc != crc32(data, 4, 8) || b <= 0) {
+                throw new IOException("raft.log header is corrupt");
+            }
+            logBase = b;
+            pos = LOG_HEADER;
+        }
+        endOffset = pos;
         while (pos < size) {
             long remaining = size - pos;
             if (remaining < HEADER) {
@@ -227,15 +267,27 @@ public final class FileRaftStorage implements RaftStorage, AutoCloseable {
 
     @Override
     public long lastIndex() {
-        return entries.size();
+        return logBase + entries.size();
     }
 
     @Override
     public LogEntry entry(long index) {
-        if (index < 1 || index > entries.size()) {
-            throw new IndexOutOfBoundsException("no log entry " + index + " (last is " + entries.size() + ")");
+        if (index <= logBase || index > lastIndex()) {
+            throw new IndexOutOfBoundsException("no log entry " + index + " (log holds " + (logBase + 1) + ".."
+                    + lastIndex() + ")");
         }
-        return entries.get((int) index - 1);
+        return entries.get((int) (index - logBase - 1));
+    }
+
+    @Override
+    public long termAt(long index) {
+        if (index == 0) {
+            return 0;
+        }
+        if (index == logBase) {
+            return baseTerm;
+        }
+        return entry(index).term();
     }
 
     @Override
@@ -279,21 +331,177 @@ public final class FileRaftStorage implements RaftStorage, AutoCloseable {
         if (fromIndex < 1) {
             throw new IllegalArgumentException("index must be >= 1");
         }
-        if (fromIndex > entries.size()) {
+        if (fromIndex <= logBase) {
+            throw new IllegalStateException("cannot truncate from " + fromIndex + ": entries up to " + logBase
+                    + " are covered by a snapshot");
+        }
+        if (fromIndex > lastIndex()) {
             return;
         }
-        long cut = offsets.get((int) fromIndex - 1);
+        long cut = offsets.get((int) (fromIndex - logBase - 1));
         try {
             logChannel.truncate(cut);
             force(logChannel);
         } catch (IOException e) {
             throw new UncheckedIOException("cannot truncate the raft log", e);
         }
-        while (entries.size() >= fromIndex) {
+        while (lastIndex() >= fromIndex) {
             entries.remove(entries.size() - 1);
             offsets.remove(offsets.size() - 1);
         }
         endOffset = cut;
+    }
+
+    // ------------------------------------------------------------------ snapshot
+
+    @Override
+    public long snapshotIndex() {
+        return base;
+    }
+
+    @Override
+    public long snapshotTerm() {
+        return baseTerm;
+    }
+
+    /** Reads only enough of raft.snapshot to learn its index and term (and checks the whole file's checksum). */
+    private void loadSnapshotHeader() throws IOException {
+        Snapshot snap = readSnapshotFile();
+        if (snap != null) {
+            base = snap.index();
+            baseTerm = snap.term();
+        }
+    }
+
+    private Snapshot readSnapshotFile() throws IOException {
+        if (!Files.exists(snapshotFile)) {
+            return null;
+        }
+        byte[] bytes = Files.readAllBytes(snapshotFile);
+        if (bytes.length < 28) {
+            throw new IOException("raft.snapshot is too short: refusing to guess");
+        }
+        ByteBuffer buf = ByteBuffer.wrap(bytes);
+        if (buf.getInt() != SNAPSHOT_MAGIC) {
+            throw new IOException("raft.snapshot has the wrong magic number");
+        }
+        long index = buf.getLong();
+        long snapTerm = buf.getLong();
+        int length = buf.getInt();
+        if (index <= 0 || snapTerm <= 0 || length < 0 || length > MAX_SNAPSHOT_BYTES || bytes.length != 28 + length) {
+            throw new IOException("raft.snapshot is malformed: refusing to guess");
+        }
+        byte[] state = new byte[length];
+        buf.get(state);
+        int crc = buf.getInt();
+        if (crc != crc32(bytes, 0, bytes.length - 4)) {
+            throw new IOException("raft.snapshot checksum mismatch: the file is corrupt");
+        }
+        return new Snapshot(index, snapTerm, state);
+    }
+
+    @Override
+    public Snapshot snapshot() {
+        if (base == 0) {
+            return null;
+        }
+        try {
+            return readSnapshotFile();
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot read the snapshot", e);
+        }
+    }
+
+    @Override
+    public void installSnapshot(long index, long term, byte[] state) {
+        ensureOpen();
+        if (index <= base) {
+            return;
+        }
+        if (state.length > MAX_SNAPSHOT_BYTES) {
+            throw new IllegalArgumentException("snapshot of " + state.length + " bytes is too large");
+        }
+        if (term <= 0) {
+            throw new IllegalArgumentException("term must be positive");
+        }
+        ByteBuffer buf = ByteBuffer.allocate(28 + state.length);
+        buf.putInt(SNAPSHOT_MAGIC).putLong(index).putLong(term).putInt(state.length).put(state);
+        buf.putInt(crc32(buf.array(), 0, 24 + state.length));
+        try {
+            writeAtomically(snapshotFile, dir.resolve("raft.snapshot.tmp"), buf.array());
+            base = index; // the snapshot is durable: from now on it is the truth
+            baseTerm = term;
+            compactLogTo(index, term);
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot persist the snapshot", e);
+        }
+    }
+
+    /** Completes a compaction that a crash interrupted after the snapshot was written. */
+    private void finishInterruptedCompaction() throws IOException {
+        compactLogTo(base, baseTerm);
+    }
+
+    /**
+     * Rewrites the log file so that it starts after {@code index}: keeping the entries after it if this log holds the
+     * entry at {@code index} with {@code term}, otherwise keeping nothing. Write temp, force, atomic rename.
+     */
+    private void compactLogTo(long index, long term) throws IOException {
+        boolean keep = index <= lastIndex() && index > logBase && entries.get((int) (index - logBase - 1)).term() == term;
+        List<LogEntry> retained = keep
+                ? new ArrayList<>(entries.subList((int) (index - logBase), entries.size())) : List.of();
+        ByteBuffer header = ByteBuffer.allocate(LOG_HEADER);
+        header.putInt(LOG_MAGIC).putLong(index);
+        header.putInt(crc32(header.array(), 4, 8));
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        out.write(header.array());
+        List<Long> newOffsets = new ArrayList<>(retained.size());
+        long pos = LOG_HEADER;
+        for (LogEntry e : retained) {
+            byte[] record = encodeRecord(e);
+            newOffsets.add(pos);
+            out.write(record);
+            pos += record.length;
+        }
+        logChannel.close();
+        try {
+            writeAtomically(logFile, dir.resolve("raft.log.tmp"), out.toByteArray());
+        } finally {
+            logChannel = FileChannel.open(logFile, StandardOpenOption.CREATE, StandardOpenOption.READ,
+                    StandardOpenOption.WRITE);
+        }
+        entries.clear();
+        entries.addAll(retained);
+        offsets.clear();
+        offsets.addAll(newOffsets);
+        logBase = index;
+        endOffset = pos;
+    }
+
+    private static byte[] encodeRecord(LogEntry e) {
+        byte[] command = e.command();
+        ByteBuffer body = ByteBuffer.allocate(8 + command.length);
+        body.putLong(e.term()).put(command);
+        ByteBuffer record = ByteBuffer.allocate(HEADER + body.capacity());
+        record.putInt(body.capacity()).putInt(crc32(body.array(), 0, body.capacity())).put(body.array());
+        return record.array();
+    }
+
+    private void writeAtomically(Path target, Path tmp, byte[] bytes) throws IOException {
+        try (FileChannel ch = FileChannel.open(tmp, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING)) {
+            ByteBuffer buf = ByteBuffer.wrap(bytes);
+            while (buf.hasRemaining()) {
+                ch.write(buf);
+            }
+            force(ch);
+        }
+        try {
+            Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+        syncDirectory();
     }
 
     // ------------------------------------------------------------------ housekeeping

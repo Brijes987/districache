@@ -112,4 +112,22 @@ class LinearizabilityChaosTest {
         assertTrue(largest >= 2, "group commit must actually have batched: " + largest);
         assertTrue(ops > 10_000, "too little checked: " + ops);
     }
+
+    @Test
+    void withSnapshotsTheSystemIsStillLinearizableUnderFaults() {
+        long installed = 0;
+        int ops = 0;
+        for (long seed = 801; seed <= 840; seed++) {
+            for (Chaos.Profile profile : new Chaos.Profile[] {Chaos.Profile.normal(), Chaos.Profile.brutal()}) {
+                ReplicatedChaos.Result r = ReplicatedChaos.run(seed, 3_000, profile,
+                        RaftConfig.defaults().withSnapshotEvery(10), null, null, true, seed % 2 == 1);
+                LinearizabilityChecker.Result res = checker.check(r.history);
+                assertEquals(Status.LINEARIZABLE, res.status(), "seed " + seed + "\n" + res.explanation());
+                installed += r.snapshotsInstalled;
+                ops += r.history.size();
+            }
+        }
+        assertTrue(installed > 0, "InstallSnapshot must have happened in some run");
+        assertTrue(ops > 8_000, "too little checked: " + ops);
+    }
 }

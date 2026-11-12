@@ -47,6 +47,8 @@ Only `GET` and `HEAD` are accepted.
 | `districache_raft_commit_index`, `..._last_log_index`, `..._last_applied_index` | gauge | Log positions. |
 | `districache_raft_commit_lag_entries` | gauge | `last_log_index - commit_index`: entries in the log not yet known to be committed. |
 | `districache_raft_apply_lag_entries` | gauge | `commit_index - last_applied_index`. |
+| `districache_raft_snapshot_index`, `..._log_entries` | gauge | Log index covered by the latest snapshot, and the entries still held in the log (`last_log_index - snapshot_index`; stays bounded when snapshots are on). |
+| `districache_raft_snapshots_taken`, `..._snapshots_installed`, `..._snapshots_skipped` | gauge | Snapshots taken here, received from a leader, and skipped because the state was over 32 MiB (monotonic). |
 | `districache_raft_proposal_batches`, `..._proposed_entries` | gauge | Group commit on the leader: log appends made for client requests, and the requests they carried (monotonic; mean batch = entries / batches). Both stay 0 with `--max-batch 1`. |
 | `districache_raft_leader_changes`, `..._times_became_leader` | gauge | Counts since this process started (gauges, because they are read from the node's published snapshot). |
 | `districache_raft_failed` | gauge | 1 if the node stopped itself after an internal error (fail-stop). |

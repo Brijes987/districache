@@ -11,6 +11,38 @@ import java.util.List;
  */
 public interface RaftStorage {
 
+    /** Largest snapshot that is taken, sent or stored: it travels in one message (the wire limit is 64 MiB). */
+    int MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+
+    /** The state machine as of log index {@code index} (whose entry had term {@code term}). */
+    record Snapshot(long index, long term, byte[] state) {}
+
+    /** Index of the last log entry covered by the snapshot (those entries are gone from the log), or 0 for none. */
+    default long snapshotIndex() {
+        return 0;
+    }
+
+    /** Term of the entry at {@link #snapshotIndex()}, or 0. */
+    default long snapshotTerm() {
+        return 0;
+    }
+
+    /** The stored snapshot, or null if there is none. */
+    default Snapshot snapshot() {
+        return null;
+    }
+
+    /**
+     * Durably records a snapshot covering every entry up to {@code index} and drops those entries from the log. If this
+     * log already holds the entry at {@code index} with term {@code term}, the entries after it are kept; otherwise (a
+     * snapshot received from a leader that is ahead) the whole log is discarded and {@link #lastIndex()} becomes
+     * {@code index}. An {@code index} at or below {@link #snapshotIndex()} is ignored. Entries up to {@code index}
+     * must already be committed: they can no longer be inspected or changed.
+     */
+    default void installSnapshot(long index, long term, byte[] state) {
+        throw new UnsupportedOperationException("this storage cannot hold snapshots");
+    }
+
     long currentTerm();
 
     /** The candidate voted for in {@link #currentTerm()}, or -1. */
@@ -18,13 +50,13 @@ public interface RaftStorage {
 
     void saveTermAndVote(long term, int votedFor);
 
-    /** Index of the last entry, 0 for an empty log. */
+    /** Index of the last entry (the snapshot's index if the log holds none after it), 0 for an empty log. */
     long lastIndex();
 
-    /** The entry at {@code index} (1 &lt;= index &lt;= lastIndex). */
+    /** The entry at {@code index} ({@code snapshotIndex() < index <= lastIndex}). */
     LogEntry entry(long index);
 
-    /** Term of the entry at {@code index}; 0 for index 0. */
+    /** Term of the entry at {@code index}; 0 for index 0; the snapshot's term for {@link #snapshotIndex()}. */
     default long termAt(long index) {
         return index == 0 ? 0 : entry(index).term();
     }

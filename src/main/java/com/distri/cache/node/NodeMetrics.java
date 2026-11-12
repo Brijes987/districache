@@ -69,6 +69,20 @@ final class NodeMetrics {
                 () -> with(server, NodeRuntime::leaderChanges));
         registry.gauge("districache_raft_times_became_leader", "Times this server became leader since start.",
                 () -> with(server, NodeRuntime::timesLeader));
+        registry.gauge("districache_raft_snapshot_index",
+                "Log index covered by this server's latest snapshot (entries up to it were dropped from the log); 0 for none.",
+                () -> with(server, NodeRuntime::snapshotIndex));
+        registry.gauge("districache_raft_log_entries",
+                "Entries held in this server's log: last_log_index - snapshot_index. Stays bounded when snapshots are on.",
+                () -> with(server, rt -> rt.lastLogIndex() - rt.snapshotIndex()));
+        registry.gauge("districache_raft_snapshots_taken", "Snapshots this server took itself since start; only grows.",
+                () -> with(server, NodeRuntime::snapshotsTaken));
+        registry.gauge("districache_raft_snapshots_installed",
+                "Snapshots this server received from a leader and installed since start; only grows.",
+                () -> with(server, NodeRuntime::snapshotsInstalled));
+        registry.gauge("districache_raft_snapshots_skipped",
+                "Times a snapshot was due but the state was too large (over 32 MiB) to take; only grows.",
+                () -> with(server, NodeRuntime::snapshotsSkipped));
         registry.gauge("districache_raft_proposal_batches",
                 "Log appends made by this server as leader for client requests (each is one fsync); only grows. "
                         + "Needs group commit (--max-batch above 1), otherwise stays 0.",

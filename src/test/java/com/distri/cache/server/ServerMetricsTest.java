@@ -175,7 +175,9 @@ class ServerMetricsTest {
     @Test
     void manyConnectionsCountedWithoutLoss() throws Exception {
         MetricsRegistry registry = new MetricsRegistry();
-        ShardedLRUCache<String, String> cache = new ShardedLRUCache<>(1000, 4, 0);
+        // Big enough that nothing is evicted: a key another client's SETs push out between this client's SET and GET
+        // would be a miss, and this test counts hits (it failed once with 3999 of 4000 for that reason).
+        ShardedLRUCache<String, String> cache = new ShardedLRUCache<>(100_000, 4, 0);
         int clients = 8;
         int each = 500;
         try (CacheServer server = new CacheServer(cache, 0).enableMetrics(registry).start()) {

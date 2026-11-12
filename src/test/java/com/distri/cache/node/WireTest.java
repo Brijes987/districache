@@ -179,4 +179,37 @@ class WireTest {
             assertThrows(IllegalArgumentException.class, () -> ReplicatedServerMain.parseMembers(bad), "'" + bad + "'");
         }
     }
+
+    @Test
+    void installSnapshotSurvivesTheWireAndMalformedOnesAreRejected() throws IOException {
+        byte[] state = new byte[5_000];
+        new Random(5).nextBytes(state);
+        RaftMessage.InstallSnapshot sent = new RaftMessage.InstallSnapshot(9, 2, 12_345, 8, state);
+        byte[] bytes = RaftMessageCodec.encode(sent);
+        RaftMessage.InstallSnapshot got = (RaftMessage.InstallSnapshot) RaftMessageCodec.decode(bytes);
+        assertEquals(9, got.term());
+        assertEquals(2, got.leaderId());
+        assertEquals(12_345, got.lastIncludedIndex());
+        assertEquals(8, got.lastIncludedTerm());
+        org.junit.jupiter.api.Assertions.assertArrayEquals(state, got.state());
+
+        roundTripEmptyState();
+        for (int cut = 0; cut < bytes.length; cut += 7) {
+            byte[] truncated = java.util.Arrays.copyOf(bytes, cut);
+            assertThrows(IOException.class, () -> RaftMessageCodec.decode(truncated), "cut at " + cut);
+        }
+        byte[] badLength = bytes.clone();
+        badLength[1 + 8 + 4 + 8 + 8] = 0x7f; // the length field claims far more than is there
+        assertThrows(IOException.class, () -> RaftMessageCodec.decode(badLength));
+        assertThrows(IOException.class, () -> RaftMessageCodec.decode(
+                RaftMessageCodec.encode(new RaftMessage.InstallSnapshot(9, 2, 0, 8, state))), "index must be positive");
+        assertThrows(IOException.class, () -> RaftMessageCodec.decode(
+                RaftMessageCodec.encode(new RaftMessage.InstallSnapshot(9, 2, 5, 0, state))), "term must be positive");
+    }
+
+    private static void roundTripEmptyState() throws IOException {
+        RaftMessage.InstallSnapshot empty = (RaftMessage.InstallSnapshot) RaftMessageCodec.decode(
+                RaftMessageCodec.encode(new RaftMessage.InstallSnapshot(1, 0, 1, 1, new byte[0])));
+        assertEquals(0, empty.state().length);
+    }
 }

@@ -10,13 +10,14 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Binary form of the four Raft messages. Decoding validates everything it reads: input is untrusted. */
+/** Binary form of the five Raft messages. Decoding validates everything it reads: input is untrusted. */
 final class RaftMessageCodec {
 
     private static final byte REQUEST_VOTE = 1;
     private static final byte REQUEST_VOTE_REPLY = 2;
     private static final byte APPEND_ENTRIES = 3;
     private static final byte APPEND_ENTRIES_REPLY = 4;
+    private static final byte INSTALL_SNAPSHOT = 5;
     private static final int MAX_ENTRIES = 100_000;
 
     private RaftMessageCodec() {}
@@ -56,6 +57,14 @@ final class RaftMessageCodec {
                 out.writeLong(m.matchIndex());
                 out.writeLong(m.conflictIndex());
                 out.writeLong(m.conflictTerm());
+            } else if (message instanceof RaftMessage.InstallSnapshot m) {
+                out.writeByte(INSTALL_SNAPSHOT);
+                out.writeLong(m.term());
+                out.writeInt(m.leaderId());
+                out.writeLong(m.lastIncludedIndex());
+                out.writeLong(m.lastIncludedTerm());
+                out.writeInt(m.state().length);
+                out.write(m.state());
             } else {
                 throw new IllegalArgumentException("unknown message type " + message);
             }
@@ -104,6 +113,19 @@ final class RaftMessageCodec {
             case APPEND_ENTRIES_REPLY -> message = new RaftMessage.AppendEntriesReply(positive(in.readLong()),
                     in.readBoolean(), nonNegative(in.readLong()), nonNegative(in.readLong()),
                     nonNegative(in.readLong()));
+            case INSTALL_SNAPSHOT -> {
+                long term = positive(in.readLong());
+                int leaderId = in.readInt();
+                long index = positive(in.readLong());
+                long snapshotTerm = positive(in.readLong());
+                int length = in.readInt();
+                if (length < 0 || length > in.available() || length > com.distri.cache.raft.RaftStorage.MAX_SNAPSHOT_BYTES) {
+                    throw new IOException("bad snapshot length " + length);
+                }
+                byte[] state = new byte[length];
+                in.readFully(state);
+                message = new RaftMessage.InstallSnapshot(term, leaderId, index, snapshotTerm, state);
+            }
             default -> throw new IOException("unknown message type " + type);
         }
         if (in.available() != 0) {

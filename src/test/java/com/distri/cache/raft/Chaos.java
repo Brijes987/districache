@@ -117,28 +117,43 @@ final class Chaos {
             throw cluster.violation("the group did not recover after the chaos ended (liveness)");
         }
         cluster.deepCheck();
-        List<SimCluster.Applied> reference = cluster.applied(0);
-        for (int i = 1; i < cluster.n; i++) {
-            if (!cluster.applied(i).equals(reference)) {
-                throw cluster.violation("node " + i + " applied a different command sequence than node 0");
+        // A node that installed a snapshot never applied the commands inside it, so the lists can differ in their
+        // beginning; what each node did apply must agree with every other node at every index.
+        java.util.Map<Long, String> reference = new java.util.TreeMap<>();
+        for (int i = 0; i < cluster.n; i++) {
+            for (SimCluster.Applied a : cluster.applied(i)) {
+                String known = reference.putIfAbsent(a.index(), a.command());
+                if (known != null && !known.equals(a.command())) {
+                    throw cluster.violation("node " + i + " applied '" + a.command() + "' at index " + a.index()
+                            + " but another node applied '" + known + "'");
+                }
             }
         }
-        for (SimCluster.Applied a : reference) {
-            if (!proposed.contains(a.command())) {
-                throw cluster.violation("command '" + a.command() + "' was applied but never proposed");
+        for (String command : reference.values()) {
+            if (!proposed.contains(command)) {
+                throw cluster.violation("command '" + command + "' was applied but never proposed");
             }
         }
     }
 
     private boolean converged(String finalPrefix) {
-        List<SimCluster.Applied> first = cluster.applied(0);
-        if (first.isEmpty() || !first.get(first.size() - 1).command().startsWith(finalPrefix)) {
+        long finalIndex = -1;
+        for (int i = 0; i < cluster.n; i++) {
+            List<SimCluster.Applied> list = cluster.applied(i);
+            if (!list.isEmpty() && list.get(list.size() - 1).command().startsWith(finalPrefix)) {
+                finalIndex = list.get(list.size() - 1).index();
+            }
+        }
+        if (finalIndex < 0) {
             return false;
         }
-        for (int i = 1; i < cluster.n; i++) {
-            if (!cluster.applied(i).equals(first)) {
+        long applied = -1;
+        for (int i = 0; i < cluster.n; i++) {
+            RaftNode node = cluster.node(i);
+            if (node == null || node.lastApplied() < finalIndex || (applied >= 0 && node.lastApplied() != applied)) {
                 return false;
             }
+            applied = node.lastApplied();
         }
         return true;
     }

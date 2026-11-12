@@ -108,6 +108,12 @@ in [docs/RAFT.md](docs/RAFT.md).
 - **Raft from scratch**: leader election, log replication, commitment by counting replicas only for current-term entries,
   a no-op entry when a leader takes over, and check-quorum so a cut-off leader steps down.
 - **Durable**: the term, vote and log are stored with checksums and survive crashes, including a torn final write.
+- **Snapshots and log compaction**: the cache and the client sessions are snapshotted every N applied entries (default
+  10,000) and the log they cover is dropped, so disk use and restart time stop growing with the number of writes. A server
+  that was down while the log was compacted is caught up by being sent a snapshot. See
+  [docs/SNAPSHOTS.md](docs/SNAPSHOTS.md). Measured on one server after a million overwrites of 10,000 keys: 156 MB on
+  disk and a 2.6 s restart without snapshots, against 1.2 MB and 140 ms with them (single run; see the doc for the
+  other write counts and caveats).
 - **Exactly-once client retries**: clients carry a session id and sequence number, so a retry after a lost reply or a
   leader change takes effect at most once.
 - **Reads go through the log**, so they are linearizable but cost about as much as writes (see the benchmark below).
@@ -194,7 +200,7 @@ requests by outcome. Latency percentiles are bucket-edge estimates of server-sid
 ```bash
 mvn clean test
 ```
-436 tests, 0 failures at the time of writing, run on every push by GitHub Actions.
+489 tests, 0 failures at the time of writing, run on every push by GitHub Actions.
 
 ## Benchmarks
 Single-node cache throughput uses JMH:
@@ -261,7 +267,9 @@ cluster has not been tested on separate machines or under real network faults be
 - Reads go through the log, so they cost as much as writes. There is no read-index or lease optimisation.
 - Group commit batches only requests that are already waiting (there is no deliberate delay), so a single client still
   pays one sync per write (measured: no gain with one client).
-- No snapshots or log compaction: disk use and restart time grow with the number of writes.
+- A snapshot travels in one message and is limited to 32 MiB; a larger cache is not snapshotted and its log keeps
+  growing (counted by `districache_raft_snapshots_skipped`). A follower that is only slightly behind when a snapshot is
+  taken is also sent the whole snapshot rather than the few entries it misses. See docs/SNAPSHOTS.md.
 - The group is fixed: servers cannot be added or removed while it runs. There is no data migration.
 - Tested on one machine only. Failover time and throughput on separate machines or a real network are unmeasured.
 
@@ -279,7 +287,8 @@ cluster has not been tested on separate machines or under real network faults be
   measured benchmark
 - Done: Prometheus metrics for both server modes
 - Done: group commit for the Raft log, measured before and after (docs/GROUP_COMMIT.md)
+- Done: snapshots and log compaction with InstallSnapshot for lagging servers, measured (docs/SNAPSHOTS.md)
 - Done: opt-in buffered reads with a before/after JMH comparison (docs/READ_BUFFER.md); not yet exposed as a server flag
 - Not started (ideas, in the order I would do them): measuring the hit-ratio cost of buffered
-  reads; log snapshots and compaction; read-index reads; TLS for the replicated mode; a test on separate machines
+  reads; read-index reads; TLS for the replicated mode; a test on separate machines
 - Dropped: a separate failover monitor process (Raft elects its own leader) and data migration on membership changes

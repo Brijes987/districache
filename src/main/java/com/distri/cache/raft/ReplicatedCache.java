@@ -361,6 +361,141 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
         return new Reply(Kind.OK, false, null, -1);
     }
 
+    // ------------------------------------------------------------------ snapshots
+
+    private static final int SNAPSHOT_VERSION = 1;
+
+    /** The live entries (least recently used first, with their expiry times) and the client sessions, as bytes. */
+    @Override
+    public byte[] snapshot() {
+        try {
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+            java.io.DataOutputStream out = new java.io.DataOutputStream(bytes);
+            out.writeInt(SNAPSHOT_VERSION);
+            List<CacheSnapshotEntry<String, String>> entries = cache.snapshotLruToMru();
+            out.writeInt(entries.size());
+            for (CacheSnapshotEntry<String, String> e : entries) {
+                writeString(out, e.key());
+                writeString(out, e.value());
+                out.writeLong(e.expiresAtMillis());
+            }
+            out.writeInt(sessions.size());
+            for (Map.Entry<Long, Session> e : sessions.entrySet()) {
+                out.writeLong(e.getKey());
+                out.writeLong(e.getValue().lastSeq());
+                Reply r = e.getValue().result();
+                out.writeByte(r.kind().ordinal());
+                out.writeBoolean(r.found());
+                out.writeBoolean(r.value() != null);
+                if (r.value() != null) {
+                    writeString(out, r.value());
+                }
+                out.writeInt(r.leaderHint());
+            }
+            out.writeBoolean(executions != null); // test instrumentation only: carries the execution counts along
+            if (executions != null) {
+                out.writeInt(executions.size());
+                for (Map.Entry<String, Integer> e : executions.entrySet()) {
+                    writeString(out, e.getKey());
+                    out.writeInt(e.getValue());
+                }
+            }
+            return bytes.toByteArray();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e); // cannot happen: writing to memory
+        }
+    }
+
+    /** Replaces the cache and the sessions with those in {@code state}. Throws, changing nothing, if it is malformed. */
+    @Override
+    public void restore(byte[] state) {
+        List<CacheSnapshotEntry<String, String>> entries = new ArrayList<>();
+        Map<Long, Session> restored = new LinkedHashMap<>();
+        Map<String, Integer> restoredExecutions = new HashMap<>();
+        try {
+            java.io.DataInputStream in = new java.io.DataInputStream(new java.io.ByteArrayInputStream(state));
+            if (in.readInt() != SNAPSHOT_VERSION) {
+                throw new IllegalArgumentException("unknown snapshot version");
+            }
+            int count = in.readInt();
+            if (count < 0 || count > state.length) {
+                throw new IllegalArgumentException("bad entry count " + count);
+            }
+            for (int i = 0; i < count; i++) {
+                String key = readString(in);
+                String value = readString(in);
+                entries.add(new CacheSnapshotEntry<>(key, value, in.readLong()));
+            }
+            int sessionCount = in.readInt();
+            if (sessionCount < 0 || sessionCount > state.length) {
+                throw new IllegalArgumentException("bad session count " + sessionCount);
+            }
+            Kind[] kinds = Kind.values();
+            for (int i = 0; i < sessionCount; i++) {
+                long clientId = in.readLong();
+                long lastSeq = in.readLong();
+                int kind = in.readByte();
+                if (kind < 0 || kind >= kinds.length) {
+                    throw new IllegalArgumentException("bad reply kind " + kind);
+                }
+                boolean found = in.readBoolean();
+                String value = in.readBoolean() ? readString(in) : null;
+                int hint = in.readInt();
+                restored.put(clientId, new Session(lastSeq, new Reply(kinds[kind], found, value, hint)));
+            }
+            if (in.readBoolean()) {
+                int tracked = in.readInt();
+                if (tracked < 0 || tracked > state.length) {
+                    throw new IllegalArgumentException("bad tracking count " + tracked);
+                }
+                for (int i = 0; i < tracked; i++) {
+                    String key = readString(in);
+                    restoredExecutions.put(key, in.readInt());
+                }
+            }
+            if (in.available() != 0) {
+                throw new IllegalArgumentException("trailing bytes after the snapshot");
+            }
+        } catch (java.io.IOException e) {
+            throw new IllegalArgumentException("malformed snapshot: " + e.getMessage(), e);
+        }
+        // nothing above touched this object; from here on it is replaced
+        cache.clear();
+        long now = clock.getAsLong();
+        for (CacheSnapshotEntry<String, String> e : entries) {
+            if (e.expiresAtMillis() == -1) {
+                cache.put(e.key(), e.value());
+            } else if (e.expiresAtMillis() > now) {
+                cache.put(e.key(), e.value(), e.expiresAtMillis() - now);
+            }
+        }
+        if (executions != null) {
+            executions.clear();
+            executions.putAll(restoredExecutions);
+        }
+        sessions.clear();
+        sessions.putAll(restored);
+        while (sessions.size() > maxSessions) {
+            sessions.remove(sessions.keySet().iterator().next());
+        }
+    }
+
+    private static void writeString(java.io.DataOutputStream out, String s) throws java.io.IOException {
+        byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        out.writeInt(b.length);
+        out.write(b);
+    }
+
+    private static String readString(java.io.DataInputStream in) throws java.io.IOException {
+        int length = in.readInt();
+        if (length < 0 || length > in.available()) {
+            throw new IllegalArgumentException("bad string length " + length);
+        }
+        byte[] b = new byte[length];
+        in.readFully(b);
+        return new String(b, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     // ------------------------------------------------------------------ inspection
 
     /** The live entries of this server's copy, sorted by key. For tests and diagnostics. */

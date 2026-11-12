@@ -25,6 +25,8 @@ final class ReplicatedChaos {
         long batches;
         long batchedEntries;
         long largestBatch;
+        long snapshotsTaken;
+        long snapshotsInstalled;
     }
 
     private static final class Client {
@@ -96,6 +98,8 @@ final class ReplicatedChaos {
         run.result.batches = h.batches;
         run.result.batchedEntries = h.batchedEntries;
         run.result.largestBatch = h.largestBatch;
+        run.result.snapshotsTaken = h.snapshotsTaken;
+        run.result.snapshotsInstalled = h.snapshotsInstalled;
         if (endStateChecks) {
             run.check();
         }

@@ -41,6 +41,10 @@ final class NodeRuntime implements AutoCloseable {
     private volatile long lastApplied;
     private volatile long leaderChanges; // times this node saw its known leader change (including to "none" and back)
     private volatile long timesLeader;   // times this node became leader
+    private volatile long snapshotIndex;
+    private volatile long snapshotsTaken;
+    private volatile long snapshotsInstalled;
+    private volatile long snapshotsSkipped;
 
     /**
      * @param maxBatch group commit: the loop runs at most this many queued tasks in a row, without waiting, and proposes the client writes among them with ONE log append (one
@@ -145,6 +149,22 @@ final class NodeRuntime implements AutoCloseable {
         return timesLeader;
     }
 
+    long snapshotIndex() {
+        return snapshotIndex;
+    }
+
+    long snapshotsTaken() {
+        return snapshotsTaken;
+    }
+
+    long snapshotsInstalled() {
+        return snapshotsInstalled;
+    }
+
+    long snapshotsSkipped() {
+        return snapshotsSkipped;
+    }
+
     long proposalBatches() {
         return cache.batchesProposed();
     }
@@ -212,6 +232,10 @@ final class NodeRuntime implements AutoCloseable {
         leaderId = newLeader;
         lastLogIndex = node.lastLogIndex();
         lastApplied = node.lastApplied();
+        snapshotIndex = node.snapshotIndex();
+        snapshotsTaken = node.snapshotsTaken();
+        snapshotsInstalled = node.snapshotsInstalled();
+        snapshotsSkipped = node.snapshotsSkipped();
     }
 
     @Override

@@ -61,4 +61,19 @@ class RaftChaosTest {
         assertTrue(cluster.committedEntries().size() > 20,
                 "expected commits during chaos, saw " + cluster.committedEntries().size());
     }
+
+    @Test
+    void safetyHoldsWithSnapshotsAndCompactedLogsUnderFailures() {
+        for (long seed = 3_000; seed < 3_040; seed++) {
+            Chaos.fullRun(seed, 3_000, seed % 2 == 0 ? Chaos.Profile.normal() : Chaos.Profile.brutal(),
+                    RaftConfig.defaults().withSnapshotEvery(8));
+        }
+    }
+
+    @Test
+    void safetyHoldsWithSnapshotsAfterEveryEntry() {
+        for (long seed = 3_100; seed < 3_120; seed++) {
+            Chaos.fullRun(seed, 2_000, Chaos.Profile.brutal(), RaftConfig.defaults().withSnapshotEvery(1));
+        }
+    }
 }

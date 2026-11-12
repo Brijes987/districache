@@ -99,4 +99,67 @@ class ReplicatedChaosTest {
         }
         assertTrue(acknowledged > 100, "got " + acknowledged);
     }
+
+    @Test
+    void withSnapshotsReplicasStillAgreeAndNothingRunsTwiceAndLaggingFollowersAreCaughtUpBySnapshot() {
+        int acknowledged = 0;
+        long taken = 0;
+        long installed = 0;
+        for (long seed = 601; seed <= 640; seed++) {
+            ReplicatedChaos.Result o = ReplicatedChaos.run(seed, 3_000, Chaos.Profile.normal(),
+                    RaftConfig.defaults().withSnapshotEvery(10), null, null, true, seed % 2 == 0);
+            acknowledged += o.acknowledged;
+            taken += o.snapshotsTaken;
+            installed += o.snapshotsInstalled;
+        }
+        assertTrue(acknowledged > 400, "got " + acknowledged);
+        assertTrue(taken > 100, "snapshots must really be taken: " + taken);
+        assertTrue(installed > 0, "no follower was ever caught up by a snapshot, so InstallSnapshot is untested");
+    }
+
+    @Test
+    void withSnapshotsServersThatRestartFromFilesWithTornTailsComeBackCorrect() throws IOException {
+        int acknowledged = 0;
+        long taken = 0;
+        for (long seed = 701; seed <= 716; seed++) {
+            Path dir = Files.createTempDirectory("raft-chaos-snap");
+            try {
+                ReplicatedChaos.Result o = ReplicatedChaos.run(seed, 2_000, Chaos.Profile.brutal(),
+                        RaftConfig.defaults().withSnapshotEvery(6), null, dir, true, true);
+                acknowledged += o.acknowledged;
+                taken += o.snapshotsTaken;
+            } finally {
+                try (var walk = Files.walk(dir)) {
+                    walk.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+                }
+            }
+        }
+        assertTrue(acknowledged > 100, "got " + acknowledged);
+        assertTrue(taken > 50, "snapshots must really be taken: " + taken);
+    }
+
+    private static int runsCaught(RaftConfig.Fault fault, int firstSeed, int lastSeed) {
+        int caught = 0;
+        for (long seed = firstSeed; seed <= lastSeed; seed++) {
+            try {
+                ReplicatedChaos.run(seed, 3_000, Chaos.Profile.brutal(),
+                        RaftConfig.defaults().withSnapshotEvery(8).withFaults(fault), null, null, true, seed % 2 == 0);
+            } catch (AssertionError | RuntimeException e) {
+                caught++;
+            }
+        }
+        return caught;
+    }
+
+    @Test
+    void aSnapshotTakenBeforeTheLastEntryIsAppliedIsCaughtByTheReplicaChecks() {
+        assertTrue(runsCaught(RaftConfig.Fault.SNAPSHOT_BEFORE_APPLY, 901, 930) > 0,
+                "followers that install such a snapshot hold different data; the checks must notice");
+    }
+
+    @Test
+    void installingASnapshotOlderThanWhatWasCommittedIsCaught() {
+        assertTrue(runsCaught(RaftConfig.Fault.INSTALL_STALE_SNAPSHOT, 951, 990) > 0,
+                "rolling a follower's state back must be noticed");
+    }
 }

@@ -54,11 +54,15 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
 
     @Override
     public void started(int node, RaftNode raftNode) {
+        rafts[node] = raftNode;
         caches[node].attach(raftNode);
     }
 
     @Override
     public void stopped(int node) {
+        snapshotsTaken += rafts[node].snapshotsTaken();
+        snapshotsInstalled += rafts[node].snapshotsInstalled();
+        rafts[node] = null;
         collect(caches[node]);
         caches[node].close();
         caches[node] = null;
@@ -124,6 +128,9 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
         pollAll();
     }
 
+    final RaftNode[] rafts = new RaftNode[8];
+    long snapshotsTaken;
+    long snapshotsInstalled;
     long batches;
     long batchedEntries;
     long largestBatch;
@@ -136,6 +143,12 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
 
     /** Batch statistics of every server so far, including those that crashed and were rebuilt. */
     void collectLive() {
+        for (RaftNode r : rafts) {
+            if (r != null) {
+                snapshotsTaken += r.snapshotsTaken();
+                snapshotsInstalled += r.snapshotsInstalled();
+            }
+        }
         for (ReplicatedCache c : caches) {
             if (c != null) {
                 collect(c);

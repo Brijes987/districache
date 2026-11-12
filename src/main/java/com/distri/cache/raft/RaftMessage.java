@@ -2,10 +2,10 @@ package com.distri.cache.raft;
 
 import java.util.List;
 
-/** The four messages of the Raft protocol. Every message carries the sender's current term. */
+/** The five messages of the Raft protocol. Every message carries the sender's current term. */
 public sealed interface RaftMessage
         permits RaftMessage.RequestVote, RaftMessage.RequestVoteReply, RaftMessage.AppendEntries,
-        RaftMessage.AppendEntriesReply {
+        RaftMessage.AppendEntriesReply, RaftMessage.InstallSnapshot {
 
     long term();
 
@@ -26,5 +26,14 @@ public sealed interface RaftMessage
      * {@code conflictIndex/conflictTerm} let the leader jump back instead of probing one entry at a time.
      */
     record AppendEntriesReply(long term, boolean success, long matchIndex, long conflictIndex, long conflictTerm)
+            implements RaftMessage {}
+
+    /**
+     * The leader sends its whole state as of log index {@code lastIncludedIndex} (whose entry had term
+     * {@code lastIncludedTerm}) to a follower that is so far behind that the entries it needs are no longer in the
+     * leader's log. The follower answers with an {@link AppendEntriesReply} whose {@code matchIndex} is
+     * {@code lastIncludedIndex}.
+     */
+    record InstallSnapshot(long term, int leaderId, long lastIncludedIndex, long lastIncludedTerm, byte[] state)
             implements RaftMessage {}
 }
