@@ -194,6 +194,15 @@ public final class ReplicatedServer implements AutoCloseable {
         }
     }
 
+    /** For tests and experiments only: see {@link ReplicatedCache#setSnapshotDelayMillisForTesting}. Call after start(). */
+    public void setSnapshotDelayMillisForTesting(long millis) {
+        ReplicatedCache c = cache;
+        if (c == null) {
+            throw new IllegalStateException("call after start()");
+        }
+        c.setSnapshotDelayMillisForTesting(millis);
+    }
+
     NodeRuntime runtimeForMetrics() {
         return runtime;
     }

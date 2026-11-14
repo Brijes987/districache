@@ -136,4 +136,5 @@ blow-up; it points at the Windows machine's memory. From the Windows machine I w
 - What it means for Raft (follows from the design, not tested): the node's thread does the copy, so it sends no heartbeats meanwhile.
   With the defaults an election timeout is 300 to 600 ms. At 100,000 entries the pause (about 0.07 to 0.16 s here) is below that.
   At 500,000 entries (0.86 s here) and at 1,000,000 entries (0.5 s on the Linux machine, more on the laptop) it is above it, so
-  followers would probably start an election while the leader takes a snapshot. This has not been run.
+  followers would start an election while the leader takes a snapshot. That mechanism was shown in a real three-server cluster with a
+  simulated slow snapshot (`SnapshotLeadershipTest`, docs/SNAPSHOTS.md); it has not been shown with a real state of that size.

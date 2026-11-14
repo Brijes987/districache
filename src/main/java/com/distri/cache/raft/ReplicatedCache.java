@@ -419,8 +419,25 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
     private static final int SNAPSHOT_VERSION = 1;
 
     /** The live entries (least recently used first, with their expiry times) and the client sessions, as bytes. */
+    private volatile long snapshotDelayMillis;
+
+    /**
+     * For tests and experiments only: makes every {@link #snapshot()} take at least this long, to stand in for a state too
+     * big to copy quickly. 0 (the default) turns it off.
+     */
+    public void setSnapshotDelayMillisForTesting(long millis) {
+        this.snapshotDelayMillis = millis;
+    }
+
     @Override
     public byte[] snapshot() {
+        if (snapshotDelayMillis > 0) {
+            try {
+                Thread.sleep(snapshotDelayMillis);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         try {
             java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
             java.io.DataOutputStream out = new java.io.DataOutputStream(bytes);

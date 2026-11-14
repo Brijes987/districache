@@ -125,6 +125,11 @@ repeatedly; one run per row.
   on a Windows laptop with 4.16 GB RAM (docs/GC_PAUSES.md): about 10 ms at 10,000 entries, 70 to 120 ms at 100,000 and 0.86 s
   (median) at 500,000. At 1,000,000 entries, already near the 128 MiB cap, it took 2.5 s with a 2 GiB heap and 49 s with a
   4 GiB heap (probably paging), while a Linux machine took about 0.5 s. From somewhere between 100,000 and 500,000 entries the
-  pause is longer than the default election timeout (300 to 600 ms), so the leader would probably lose leadership while
-  snapshotting; that has not been tested.
+  pause is longer than the default election timeout (300 to 600 ms), so the leader loses leadership while snapshotting: shown
+  with a simulated slow snapshot in a real three-server cluster (next point), not yet with a real state of that size.
+- Leadership during a long snapshot (`SnapshotLeadershipTest`, real servers, election timeout 100 to 200 ms in that cluster, a
+  delay inside the leader's `snapshot()` standing in for a large state): with an 800 ms snapshot on the leader another server won
+  an election and the term went from 1 to 2, in 3 of 3 runs (the client write that triggered the snapshot took 807 to 810 ms);
+  with a 40 ms delay, or none, there was no election. Today the snapshot copy and the disk write run on the Raft thread, so this is
+  how it behaves. The fix, moving the copy off that thread, is not done.
 - Snapshots are written for the replicated mode only; the single server has its own append-only-log compaction.
