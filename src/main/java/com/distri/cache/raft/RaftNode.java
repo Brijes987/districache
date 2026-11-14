@@ -136,6 +136,8 @@ public final class RaftNode {
     private long snapshotChunksSent;
     private long snapshotChunksReceived;
     private long snapshotsTaken;
+    private SnapshotWorker snapshotWorker;      // null: snapshots are taken on the node's thread
+    private boolean snapshotInFlight;
     private long snapshotsInstalled;
     private long snapshotsSkipped;
     private ReadListener readListener;
@@ -171,6 +173,35 @@ public final class RaftNode {
             lastApplied = snapshot.index();
         }
         resetElectionTimer();
+    }
+
+    /** What a background snapshot produced: a prepared snapshot, or "too large", or the failure. */
+    public record SnapshotOutcome(RaftStorage.PreparedSnapshot prepared, boolean tooLarge, Throwable failure) {}
+
+    /**
+     * Where the slow part of a snapshot (encoding the state, writing and forcing the file) runs, so that the node's thread
+     * keeps sending heartbeats and serving requests meanwhile.
+     */
+    public interface SnapshotWorker {
+        /**
+         * Runs {@code work} on some other thread (or later), and then calls {@code done} with its result ON THE NODE'S
+         * THREAD. {@code work} touches only the frozen copy of the state and its own temporary file, never the node.
+         */
+        void submit(java.util.function.Supplier<SnapshotOutcome> work, java.util.function.Consumer<SnapshotOutcome> done);
+    }
+
+    /**
+     * Takes snapshots through {@code worker} instead of on the node's thread. Call before the node is used. Without it (the
+     * default, and what the deterministic simulator uses unless it says otherwise) a snapshot is encoded and written on the
+     * node's thread.
+     */
+    public void setSnapshotWorker(SnapshotWorker worker) {
+        this.snapshotWorker = worker;
+    }
+
+    /** True while a snapshot is being prepared in the background. */
+    public boolean snapshotInFlight() {
+        return snapshotInFlight;
     }
 
     // ------------------------------------------------------------------ observers
@@ -799,11 +830,15 @@ public final class RaftNode {
 
     private byte[] snapshotState() {
         byte[] state = stateMachine.snapshot();
-        return state.length > RaftStorage.MAX_SNAPSHOT_BYTES ? null : state;
+        return state.length > maxSnapshotBytes ? null : state;
     }
 
     /** Records the state as of {@code lastApplied} and drops the log entries it covers. */
     private void takeSnapshot(byte[] precomputed) {
+        if (precomputed == null && snapshotWorker != null) {
+            takeSnapshotInBackground();
+            return;
+        }
         byte[] state = precomputed != null ? precomputed : snapshotState();
         if (state == null) {
             snapshotsSkipped++; // too large to send in one message: keep the log instead
@@ -811,6 +846,48 @@ public final class RaftNode {
         }
         storage.installSnapshot(lastApplied, storage.termAt(lastApplied), state);
         snapshotsTaken++;
+    }
+
+    /**
+     * Freezes the state as of {@code lastApplied} (fast: copies references), then lets the worker encode and write it while
+     * this node goes on. The snapshot becomes the storage's snapshot only in {@link #snapshotFinished}, which runs back on
+     * this thread; commands applied meanwhile are not in it, and stay in the log.
+     */
+    private void takeSnapshotInBackground() {
+        if (snapshotInFlight) {
+            return; // one at a time; the next apply after it finishes starts another if one is still due
+        }
+        long index = lastApplied;
+        long term = storage.termAt(index);
+        StateMachine.SnapshotCapture capture = stateMachine.captureSnapshot();
+        snapshotInFlight = true;
+        snapshotWorker.submit(() -> {
+            try {
+                byte[] state = capture.serialize();
+                if (state.length > maxSnapshotBytes) {
+                    return new SnapshotOutcome(null, true, null);
+                }
+                return new SnapshotOutcome(storage.prepareSnapshot(index, term, state), false, null);
+            } catch (Throwable t) {
+                return new SnapshotOutcome(null, false, t);
+            }
+        }, this::snapshotFinished);
+    }
+
+    private void snapshotFinished(SnapshotOutcome outcome) {
+        snapshotInFlight = false;
+        if (outcome.failure() != null) {
+            // the same response as a failed write on this thread: stop rather than carry on with a log that cannot be trimmed
+            throw new IllegalStateException("background snapshot failed", outcome.failure());
+        }
+        if (outcome.tooLarge()) {
+            snapshotsSkipped++;
+            return;
+        }
+        // A snapshot at or after this one may have been installed from a leader meanwhile; then this one is simply old.
+        if (storage.commitSnapshot(outcome.prepared())) {
+            snapshotsTaken++;
+        }
     }
 
     /** For diagnostics and tests. */

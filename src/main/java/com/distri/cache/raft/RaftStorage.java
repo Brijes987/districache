@@ -50,6 +50,43 @@ public interface RaftStorage {
         throw new UnsupportedOperationException("this storage cannot hold snapshots");
     }
 
+    /** A snapshot that has been fully written but is not yet the storage's snapshot. See {@link #prepareSnapshot}. */
+    interface PreparedSnapshot {
+        long index();
+
+        long term();
+    }
+
+    /**
+     * First half of {@link #installSnapshot}: does the slow part (encoding, writing and forcing the file) without changing
+     * what the storage reports or its log. May be called from a thread other than the node's, but only one preparation at a
+     * time, and the node's thread must not be in the middle of a different snapshot write. The result must then be passed to
+     * {@link #commitSnapshot} or {@link #discardSnapshot} on the node's thread.
+     */
+    default PreparedSnapshot prepareSnapshot(long index, long term, byte[] state) {
+        return new HeldSnapshot(index, term, state);
+    }
+
+    /**
+     * Second half: makes a prepared snapshot the storage's snapshot and compacts the log, like {@link #installSnapshot},
+     * and is fast apart from rewriting the retained log entries. Returns false, doing nothing, if a snapshot at or after
+     * the prepared one has been installed in the meantime. Node's thread only.
+     */
+    default boolean commitSnapshot(PreparedSnapshot prepared) {
+        if (prepared.index() <= snapshotIndex()) {
+            discardSnapshot(prepared);
+            return false;
+        }
+        installSnapshot(prepared.index(), prepared.term(), ((HeldSnapshot) prepared).state());
+        return true;
+    }
+
+    /** Throws a prepared snapshot away. */
+    default void discardSnapshot(PreparedSnapshot prepared) {}
+
+    /** What the default {@link #prepareSnapshot} returns: the bytes, kept in memory until they are committed. */
+    record HeldSnapshot(long index, long term, byte[] state) implements PreparedSnapshot {}
+
     long currentTerm();
 
     /** The candidate voted for in {@link #currentTerm()}, or -1. */

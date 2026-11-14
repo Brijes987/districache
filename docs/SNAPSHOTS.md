@@ -9,6 +9,9 @@ itself stayed the same size (for example a million overwrites of ten thousand ke
 - **Taking a snapshot.** After a server applies an entry, and at least `--snapshot-every N` entries (default 10,000) have
   been applied since its last snapshot, it saves the state machine as of that exact entry and drops the log entries the
   snapshot covers. Every server does this on its own; they need not agree on when.
+- **Taken in the background.** Only freezing the state (copying references to the live entries and sessions) runs on the
+  Raft thread. Encoding it into bytes, writing and forcing the file run on a separate thread; the result is handed back to
+  the Raft thread, which then makes it the snapshot and trims the log. See "Background snapshots" below.
 - **What a snapshot holds.** The live cache entries from least to most recently used with their expiry times (so the same
   entry is evicted next), and the client sessions (last sequence number and reply per client), so a retry after a
   snapshot is still executed at most once.
@@ -16,6 +19,28 @@ itself stayed the same size (for example a million overwrites of ten thousand ke
 - **Catching up.** If a follower needs entries the leader has already dropped, the leader sends its snapshot as a
   series of `InstallSnapshot` chunks (see "Chunked transfer" below). The follower assembles them, restores its state
   machine, stores the snapshot durably, and then continues with normal replication.
+
+## Background snapshots
+Before, a snapshot was encoded and written on the Raft thread, the same thread that sends heartbeats, so a snapshot that took
+longer than the election timeout made the followers elect a new leader (`SnapshotLeadershipTest` showed this, below). Now:
+1. When a snapshot is due, the Raft thread calls `captureSnapshot()`: it copies references to the cache entries and the client
+   sessions. Strings and session records are immutable, so the copy stays exactly the state as of that applied entry while
+   the node goes on. This part is still proportional to the number of entries.
+2. A separate thread (`raft-snapshot-N`) encodes the copy, writes it to a file of its own (`raft.snapshot.bg.<index>.<n>.tmp`)
+   and forces it to disk. It touches neither the live state nor the log.
+3. The result is posted back as an ordinary task on the Raft thread, which commits it: if no newer snapshot was installed
+   meanwhile (a leader may have sent one), the file is renamed into place and the log is trimmed, keeping the entries applied
+   in the meantime. Otherwise the result is thrown away.
+- Only one snapshot is prepared at a time; the next one starts after it finishes, if still due.
+- A crash while one is being prepared loses nothing: the stray file is deleted at the next start and the old snapshot and the
+  whole log are still there.
+- A failure in the background (disk full, say) stops the server, as a failed write on the Raft thread did.
+- The simulator and unit tests use a manual or randomly timed worker; without a worker (the default for a bare `RaftNode`) a
+  snapshot is still taken on the node's thread, as before.
+- What is left on the Raft thread is the freeze. Measured by `SnapshotPauseBenchmark` (docs/GC_PAUSES.md); on a Linux
+  machine with 2 CPUs it was a median of 78 ms for 1,000,000 entries, against 0.5 s for freezing and encoding together. It
+  On the 2-CPU Windows laptop (1 GiB heap) it was 6.2 ms median / 6.7 worst for 100,000 entries and 22.9 / 32.1 for 500,000;
+  7 runs, first 2 dropped; larger states not measured there.
 
 ## Chunked transfer
 - The leader sends one chunk (default 1 MiB, `RaftConfig.snapshotChunkBytes`, 1 byte to 4 MiB) and waits for the follower's
@@ -81,6 +106,14 @@ itself stayed the same size (for example a million overwrites of ten thousand ke
   was down while the log was compacted is caught up by a snapshot; the whole group restarts from its snapshots.
 - Two deliberately broken versions (installing a stale snapshot; snapshotting before applying the last entry) are caught
   by the chaos tests, and 13 hand-made code mutations were each caught by at least one test.
+- Background snapshots: `BackgroundSnapshotTest` (8; a manual worker decides when the work runs and when its result arrives:
+  nothing installed until delivered, the state is the one at the freeze and not at the finish, one at a time, an installed
+  newer snapshot makes it obsolete, failure, too large, restart), `BackgroundSnapshotStorageTest` (7; real files: preparing
+  changes nothing, a crash leaves no trace, commit keeps later entries and survives a restart, stale refused, preparing on
+  another thread beside 250 appends), a capture test in `SnapshotCacheTest`, and chaos runs with the worker finishing after a
+  random 0 to 25-40 simulated steps (Raft safety, replica agreement and exactly-once, linearizability, also with tiny chunks).
+  15 hand-made breakages were each caught; two (reading the cache or the sessions only when the background runs) were caught at
+  first only by one chaos test or not at all, because replaying idempotent commands hides them, so a direct test was added.
 
 ## Measuring
 ```
@@ -121,15 +154,15 @@ repeatedly; one run per row.
 - The InstallSnapshot wire format changed (chunks); servers of different builds cannot be mixed.
 - A follower only slightly behind when a snapshot is taken is sent the whole snapshot rather than the few entries it
   misses (no trailing entries are kept).
-- Taking a snapshot copies the whole state on the node's own thread, so that server is unresponsive meanwhile. Measured
-  on a Windows laptop with 4.16 GB RAM (docs/GC_PAUSES.md): about 10 ms at 10,000 entries, 70 to 120 ms at 100,000 and 0.86 s
-  (median) at 500,000. At 1,000,000 entries, already near the 128 MiB cap, it took 2.5 s with a 2 GiB heap and 49 s with a
-  4 GiB heap (probably paging), while a Linux machine took about 0.5 s. From somewhere between 100,000 and 500,000 entries the
-  pause is longer than the default election timeout (300 to 600 ms), so the leader loses leadership while snapshotting: shown
-  with a simulated slow snapshot in a real three-server cluster (next point), not yet with a real state of that size.
+- The freeze still runs on the Raft thread and grows with the number of entries. If it ever exceeded the election timeout
+  the old problem would come back; at the 128 MiB cap (about a million 100-byte entries) it was 78 ms on one Linux machine
+  and on the Windows laptop 500,000 entries froze in 23 ms median (32 worst); 1,000,000 was not measured there. The encoding and the file write no longer count against heartbeats.
 - Leadership during a long snapshot (`SnapshotLeadershipTest`, real servers, election timeout 100 to 200 ms in that cluster, a
-  delay inside the leader's `snapshot()` standing in for a large state): with an 800 ms snapshot on the leader another server won
-  an election and the term went from 1 to 2, in 3 of 3 runs (the client write that triggered the snapshot took 807 to 810 ms);
-  with a 40 ms delay, or none, there was no election. Today the snapshot copy and the disk write run on the Raft thread, so this is
-  how it behaves. The fix, moving the copy off that thread, is not done.
+  delay inside the snapshot encoding standing in for a large state). Before the change: with an 800 ms snapshot on the leader
+  another server won an election and the term went up (1 to 2 in 3 of 3 runs on one machine, 3 to 5 on another), and the client
+  write that triggered it took 807 ms or more. After: the same test shows no election, the term unchanged and the slowest client
+  write 6 ms (one run on one machine; on the Windows laptop: same leader, term 1, slowest write 19 ms); a 40 ms delay or none also gave no election. Real states of 500,000 entries or more
+  have not been tried in a cluster.
+- Memory: while a snapshot is being prepared the frozen copy of the entries (about 50 MB for a million entries) and the
+  encoded bytes exist beside the live cache.
 - Snapshots are written for the replicated mode only; the single server has its own append-only-log compaction.

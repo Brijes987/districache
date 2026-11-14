@@ -13,7 +13,8 @@ import org.junit.jupiter.api.Test;
  * <p>The long snapshot is simulated with a delay inside {@code snapshot()} (a test hook) so the result does not depend on how
  * fast the machine copies memory; docs/GC_PAUSES.md has real copy times. The delay is applied to the leader only.
  *
- * <p>These tests describe how it behaves TODAY. They are meant to be inverted when the snapshot copy moves off the Raft thread.
+ * <p>Before the snapshot work moved off the Raft thread, the 800 ms case below ended in an election (term 1 to 2 in 3 of 3 runs
+ * on one machine, 3 to 5 on another); it now does not. Only the cheap freezing of the state still runs on that thread.
  */
 class SnapshotLeadershipTest {
 
@@ -62,7 +63,7 @@ class SnapshotLeadershipTest {
     }
 
     @Test
-    void todayASnapshotLongerThanTheElectionTimeoutCostsTheLeaderItsLeadership() throws Exception {
+    void aSnapshotLongerThanTheElectionTimeoutNoLongerCostsTheLeaderItsLeadership() throws Exception {
         try (TestCluster cluster = new TestCluster(3)) {
             cluster.snapshotEvery = 10;
             cluster.startAll();
@@ -70,12 +71,16 @@ class SnapshotLeadershipTest {
             long term = cluster.servers[leader].term();
             cluster.servers[leader].setSnapshotDelayMillisForTesting(LONG_SNAPSHOT_MILLIS);
             long slowestWrite = writeUntilSnapshot(cluster);
-            TestCluster.await(() -> cluster.servers[leader].term() > term, 10_000, "the old leader to see a newer term");
-            TestCluster.await(() -> cluster.leader() >= 0 && cluster.leader() != leader, 10_000, "another server to lead");
-            assertTrue(cluster.servers[cluster.leader()].term() > term, "the new leader has a higher term");
-            System.out.println("SnapshotLeadershipTest: leader " + leader + " term " + term + " -> leader " + cluster.leader()
-                    + " term " + cluster.servers[cluster.leader()].term() + "; slowest client write " + slowestWrite
-                    + " ms (snapshot delay " + LONG_SNAPSHOT_MILLIS + " ms, election timeout 100 to 200 ms)");
+            // the snapshot really was taken (in the background, taking about the delay), and nobody noticed
+            TestCluster.await(() -> cluster.servers[leader].runtimeForMetrics().snapshotsTaken() >= 1, 15_000,
+                    "the slow snapshot to finish");
+            Thread.sleep(500);
+            assertEquals(leader, cluster.leader(), "the leader kept its leadership");
+            assertEquals(term, cluster.servers[leader].term(), "no election took place");
+            assertTrue(slowestWrite < LONG_SNAPSHOT_MILLIS,
+                    "client writes were not held up by the snapshot: slowest " + slowestWrite + " ms");
+            System.out.println("SnapshotLeadershipTest: leader " + leader + " kept term " + term + "; slowest client write "
+                    + slowestWrite + " ms (snapshot delay " + LONG_SNAPSHOT_MILLIS + " ms, election timeout 100 to 200 ms)");
         }
     }
 }

@@ -127,4 +127,27 @@ class SnapshotCacheTest {
             }
         }
     }
+
+    @Test
+    void aCapturedStateIsNotAffectedByCommandsAppliedAfterItWasCaptured() {
+        ReplicatedCache a = cache(100);
+        apply(a, 1, CacheCommand.set(1, 1, "k1", "v1", -1));
+        apply(a, 2, CacheCommand.set(2, 1, "k2", "v2", -1));
+        StateMachine.SnapshotCapture capture = a.captureSnapshot();
+        // the node goes on while the bytes are produced elsewhere
+        apply(a, 3, CacheCommand.delete(1, 2, "k1"));
+        apply(a, 4, CacheCommand.set(1, 3, "k3", "v3", -1));
+        apply(a, 5, CacheCommand.set(3, 1, "k4", "v4", -1));
+        byte[] state = capture.serialize();
+
+        ReplicatedCache b = cache(100);
+        b.restore(state);
+        assertEquals(Map.of("k1", "v1", "k2", "v2"), b.contents(), "the state as of index 2, nothing later");
+        assertEquals(2, b.sessionCount(), "the session of client 3 did not exist at index 2");
+        // client 1's session is as of seq 1: its seq 2 and 3 are new requests, not retries
+        apply(b, 3, CacheCommand.delete(1, 2, "k1"));
+        assertFalse(b.contents().containsKey("k1"));
+        apply(b, 4, CacheCommand.set(1, 3, "k3", "v3", -1));
+        assertEquals("v3", b.contents().get("k3"));
+    }
 }

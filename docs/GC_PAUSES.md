@@ -110,6 +110,19 @@ set out to answer for a big cache is still open).
 
 ## Snapshot pause (`SnapshotPauseBenchmark`)
 
+**Update, after snapshots moved to the background (docs/SNAPSHOTS.md):** the tables below were taken before that change and
+measure freezing and encoding together, which used to run on the Raft thread. The benchmark now prints them separately; only
+the freeze still runs on the Raft thread. Windows laptop (2 CPUs, 1 GiB heap, 7 runs, first 2 dropped), median / worst:
+
+| Entries | snapshot MiB | freeze ms | encode ms | restore ms |
+|---|---|---|---|---|
+| 100,000 | 12.4 | 6.2 / 6.7 | 57.9 / 138.3 | 71.6 / 334.0 |
+| 500,000 | 62.8 | 22.9 / 32.1 | 882.6 / 1408.4 | 324.8 / 535.3 |
+
+On my Linux machine (2 CPUs, 2 GiB heap) the freeze was a median of 0.6 ms for 10,000 entries, 13 ms for 100,000, 35 ms for
+500,000 and 78 ms for 1,000,000 (worst of five 239 ms); encoding 8, 55, 121 and 426 ms. 1,000,000 entries were not measured
+on the laptop. The old tables follow.
+
 Same machine (2 CPUs, Windows 10, Java 23), `-Xmx2g`, five timed runs per size (two warm-up runs dropped), so "worst" is the worst of five:
 
 | Entries | snapshot MiB | snapshot() median ms | snapshot() worst ms | restore() median ms | restore() worst ms |
@@ -133,8 +146,7 @@ blow-up; it points at the Windows machine's memory. From the Windows machine I w
 
 - 1,000,000 entries of 100 bytes is already 125.7 MiB: just under the 128 MiB snapshot cap, so about a million such entries is the
   most that can be snapshotted at all.
-- What it means for Raft (follows from the design, not tested): the node's thread does the copy, so it sends no heartbeats meanwhile.
+- What it meant for Raft before the change (follows from the design; then shown in `SnapshotLeadershipTest`): the node's thread does the copy, so it sends no heartbeats meanwhile.
   With the defaults an election timeout is 300 to 600 ms. At 100,000 entries the pause (about 0.07 to 0.16 s here) is below that.
   At 500,000 entries (0.86 s here) and at 1,000,000 entries (0.5 s on the Linux machine, more on the laptop) it is above it, so
-  followers would start an election while the leader takes a snapshot. That mechanism was shown in a real three-server cluster with a
-  simulated slow snapshot (`SnapshotLeadershipTest`, docs/SNAPSHOTS.md); it has not been shown with a real state of that size.
+  followers would probably start an election while the leader takes a snapshot. `SnapshotLeadershipTest` later showed this with an artificial 800 ms delay, and showed it gone after the change.

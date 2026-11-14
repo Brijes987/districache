@@ -160,8 +160,13 @@ final class Chaos {
 
     /** One full randomized run for a seed. */
     static void fullRun(long seed, int steps, Profile profile, RaftConfig config) {
+        fullRun(seed, steps, profile, config, -1);
+    }
+
+    /** @param snapshotDelaySteps zero or more: snapshots are prepared by a simulated background worker */
+    static void fullRun(long seed, int steps, Profile profile, RaftConfig config, int snapshotDelaySteps) {
         int n = seed % 2 == 0 ? 3 : 5;
-        SimCluster cluster = new SimCluster(n, seed, config);
+        SimCluster cluster = new SimCluster(n, seed, config, null, snapshotDelaySteps);
         Chaos chaos = new Chaos(cluster, seed);
         chaos.run(steps, profile);
         chaos.settleAndCheck(4_000);

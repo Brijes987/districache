@@ -29,6 +29,7 @@ final class NodeRuntime implements AutoCloseable {
     private final Runnable onFatal;
     private final LinkedBlockingQueue<Runnable> tasks = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     private final Thread thread;
+    private final java.util.concurrent.ExecutorService snapshotThread;
     private volatile boolean closed;
     private volatile boolean failed;
 
@@ -71,6 +72,27 @@ final class NodeRuntime implements AutoCloseable {
         this.onFatal = onFatal;
         this.thread = new Thread(this::loop, "raft-loop-" + node.id());
         this.thread.setDaemon(true);
+        // Encoding a big snapshot and writing it to disk take far longer than an election timeout, so they run here, not on
+        // the loop thread, which has heartbeats to send. The result is handed back as an ordinary task.
+        this.snapshotThread = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "raft-snapshot-" + node.id());
+            t.setDaemon(true);
+            return t;
+        });
+        node.setSnapshotWorker((work, done) -> snapshotThread.execute(() -> {
+            RaftNode.SnapshotOutcome outcome = work.get();
+            while (!closed) {
+                if (post(() -> done.accept(outcome))) {
+                    return;
+                }
+                try {
+                    Thread.sleep(5); // the task queue was full: try again rather than lose the result
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+            // closed: nobody will commit it; a leftover temporary file is deleted at the next start
+        }));
     }
 
     void start() {
@@ -265,6 +287,7 @@ final class NodeRuntime implements AutoCloseable {
     @Override
     public void close() {
         closed = true;
+        snapshotThread.shutdownNow();
         if (Thread.currentThread() == thread) {
             return; // stopping itself after a fatal error: the loop exits as soon as this task returns
         }

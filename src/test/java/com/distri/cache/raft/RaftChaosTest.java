@@ -84,4 +84,20 @@ class RaftChaosTest {
                     RaftConfig.defaults().withSnapshotEvery(8).withSnapshotChunkBytes(5));
         }
     }
+
+    @Test
+    void safetyHoldsWhenSnapshotsAreFinishedInTheBackgroundAtRandomTimes() {
+        for (long seed = 3_300; seed < 3_360; seed++) {
+            Chaos.fullRun(seed, 3_000, seed % 2 == 0 ? Chaos.Profile.normal() : Chaos.Profile.brutal(),
+                    RaftConfig.defaults().withSnapshotEvery(6), 25);
+        }
+    }
+
+    @Test
+    void safetyHoldsWithBackgroundSnapshotsAndTinyChunksTogether() {
+        for (long seed = 3_400; seed < 3_430; seed++) {
+            Chaos.fullRun(seed, 3_000, Chaos.Profile.brutal(),
+                    RaftConfig.defaults().withSnapshotEvery(8).withSnapshotChunkBytes(5), 40);
+        }
+    }
 }

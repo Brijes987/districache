@@ -82,6 +82,11 @@ public final class FileRaftStorage implements RaftStorage, AutoCloseable {
         Files.deleteIfExists(dir.resolve("raft.meta.tmp"));
         Files.deleteIfExists(dir.resolve("raft.snapshot.tmp"));
         Files.deleteIfExists(dir.resolve("raft.log.tmp"));
+        try (java.nio.file.DirectoryStream<Path> leftovers = Files.newDirectoryStream(dir, "raft.snapshot.bg.*.tmp")) {
+            for (Path leftover : leftovers) { // a background snapshot that was never committed
+                Files.deleteIfExists(leftover);
+            }
+        }
         this.logFile = dir.resolve("raft.log");
         this.snapshotFile = dir.resolve("raft.snapshot");
         loadMeta();
@@ -434,6 +439,77 @@ public final class FileRaftStorage implements RaftStorage, AutoCloseable {
             compactLogTo(index, term);
         } catch (IOException e) {
             throw new UncheckedIOException("cannot persist the snapshot", e);
+        }
+    }
+
+    private record FilePrepared(long index, long term, Path file) implements PreparedSnapshot {}
+
+    private final java.util.concurrent.atomic.AtomicLong preparedCounter = new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * Writes and forces the snapshot file under a name of its own, so it can run on another thread while the node's thread
+     * goes on appending to the log. Nothing the storage reports changes until {@link #commitSnapshot}. A crash before that
+     * leaves a stray file that the next start deletes.
+     */
+    @Override
+    public PreparedSnapshot prepareSnapshot(long index, long term, byte[] state) {
+        if (state.length > MAX_SNAPSHOT_BYTES) {
+            throw new IllegalArgumentException("snapshot of " + state.length + " bytes is too large");
+        }
+        if (term <= 0) {
+            throw new IllegalArgumentException("term must be positive");
+        }
+        ByteBuffer buf = ByteBuffer.allocate(28 + state.length);
+        buf.putInt(SNAPSHOT_MAGIC).putLong(index).putLong(term).putInt(state.length).put(state);
+        buf.putInt(crc32(buf.array(), 0, 24 + state.length));
+        Path tmp = dir.resolve("raft.snapshot.bg." + index + "." + preparedCounter.incrementAndGet() + ".tmp");
+        try (FileChannel ch = FileChannel.open(tmp, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+            ByteBuffer out = ByteBuffer.wrap(buf.array());
+            while (out.hasRemaining()) {
+                ch.write(out);
+            }
+            force(ch);
+        } catch (IOException e) {
+            try {
+                Files.deleteIfExists(tmp);
+            } catch (IOException ignored) {
+                // nothing more to do
+            }
+            throw new UncheckedIOException("cannot write the snapshot", e);
+        }
+        return new FilePrepared(index, term, tmp);
+    }
+
+    @Override
+    public boolean commitSnapshot(PreparedSnapshot prepared) {
+        ensureOpen();
+        FilePrepared p = (FilePrepared) prepared;
+        if (p.index() <= base) {
+            discardSnapshot(prepared);
+            return false;
+        }
+        try {
+            try {
+                Files.move(p.file(), snapshotFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(p.file(), snapshotFile, StandardCopyOption.REPLACE_EXISTING);
+            }
+            syncDirectory();
+            base = p.index(); // the snapshot is durable: from now on it is the truth
+            baseTerm = p.term();
+            compactLogTo(p.index(), p.term());
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot persist the snapshot", e);
+        }
+        return true;
+    }
+
+    @Override
+    public void discardSnapshot(PreparedSnapshot prepared) {
+        try {
+            Files.deleteIfExists(((FilePrepared) prepared).file());
+        } catch (IOException ignored) {
+            // a stray file is deleted at the next start
         }
     }
 

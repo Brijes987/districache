@@ -40,13 +40,19 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
 
     ReplicatedHarness(int n, long seed, RaftConfig config, Path storageDir, boolean batching,
             ReplicatedCache.ReadMode readMode) {
+        this(n, seed, config, storageDir, batching, readMode, -1);
+    }
+
+    /** @param snapshotDelaySteps see {@link SimCluster}: negative keeps snapshots on the node's thread */
+    ReplicatedHarness(int n, long seed, RaftConfig config, Path storageDir, boolean batching,
+            ReplicatedCache.ReadMode readMode, int snapshotDelaySteps) {
         this.readMode = readMode;
         this.batching = batching;
         this.storageDir = storageDir;
         this.tornTails = new Random(seed * 17 + 3);
         this.files = new FileRaftStorage[n];
         this.caches = new ReplicatedCache[n];
-        this.cluster = new SimCluster(n, seed, config, this);
+        this.cluster = new SimCluster(n, seed, config, this, snapshotDelaySteps);
     }
 
     @Override

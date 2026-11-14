@@ -64,6 +64,17 @@ final class SimCluster {
             return java.nio.ByteBuffer.allocate(8 + inner.length).putLong(lastIndex).put(inner).array();
         }
 
+        /** Freezes the index and the delegate's state now; the bytes are produced later, as the real node's worker does. */
+        @Override
+        public SnapshotCapture captureSnapshot() {
+            long frozenIndex = lastIndex;
+            SnapshotCapture inner = delegate == null ? null : delegate.captureSnapshot();
+            return () -> {
+                byte[] bytes = inner == null ? new byte[0] : inner.serialize();
+                return java.nio.ByteBuffer.allocate(8 + bytes.length).putLong(frozenIndex).put(bytes).array();
+            };
+        }
+
         @Override
         public void restore(byte[] state) {
             java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(state);
@@ -127,12 +138,34 @@ final class SimCluster {
 
     private final NodeFactory factory;
 
+    /** A snapshot a node has handed to its (simulated) background worker; it finishes {@code dueAt} steps from the start. */
+    private record SnapshotJob(long dueAt, java.util.function.Supplier<RaftNode.SnapshotOutcome> work,
+            java.util.function.Consumer<RaftNode.SnapshotOutcome> done) {}
+
+    private final int snapshotDelaySteps;               // negative: snapshots are taken inline on the node's thread
+    private final Random snapshotRandom;                // its own stream, so turning this on does not change other runs
+    private final List<List<SnapshotJob>> snapshotJobs = new ArrayList<>();
+
     SimCluster(int n, long seed, RaftConfig config) {
         this(n, seed, config, null);
     }
 
     SimCluster(int n, long seed, RaftConfig config, NodeFactory factory) {
+        this(n, seed, config, factory, -1);
+    }
+
+    /**
+     * @param snapshotDelaySteps negative: a node encodes and writes its snapshots itself, at once. Zero or more: it hands
+     *     them to a background worker that finishes each after a random number of steps from 0 to this value, while the
+     *     node goes on; a crash loses whatever was in progress.
+     */
+    SimCluster(int n, long seed, RaftConfig config, NodeFactory factory, int snapshotDelaySteps) {
         this.factory = factory;
+        this.snapshotDelaySteps = snapshotDelaySteps;
+        this.snapshotRandom = new Random(seed * 7919 + 13);
+        for (int i = 0; i < n; i++) {
+            snapshotJobs.add(new ArrayList<>());
+        }
         this.n = n;
         this.seed = seed;
         this.config = config;
@@ -170,6 +203,11 @@ final class SimCluster {
         machines[i] = new RecordingStateMachine(factory == null ? null : factory.create(i));
         nodes[i] = new RaftNode(i, peers, storages[i], (to, message) -> send(i, to, message), machines[i], config,
                 new Random(random.nextLong()));
+        if (snapshotDelaySteps >= 0) {
+            snapshotJobs.get(i).clear();
+            nodes[i].setSnapshotWorker((work, done) -> snapshotJobs.get(i).add(
+                    new SnapshotJob(now + snapshotRandom.nextInt(snapshotDelaySteps + 1), work, done)));
+        }
         if (factory != null) {
             factory.started(i, nodes[i]);
         }
@@ -182,6 +220,7 @@ final class SimCluster {
         if (nodes[i] != null) {
             event("crash " + i);
             nodes[i] = null;
+            snapshotJobs.get(i).clear(); // whatever a background snapshot had done so far is lost with the process
             if (factory != null) {
                 factory.stopped(i);
             }
@@ -300,6 +339,25 @@ final class SimCluster {
 
     void step() {
         now++;
+        if (snapshotDelaySteps >= 0) {
+            for (int i = 0; i < n; i++) {
+                List<SnapshotJob> jobs = snapshotJobs.get(i);
+                for (int j = 0; j < jobs.size() && nodes[i] != null; ) {
+                    SnapshotJob job = jobs.get(j);
+                    if (job.dueAt() > now) {
+                        j++;
+                        continue;
+                    }
+                    jobs.remove(j);
+                    try {
+                        job.done().accept(job.work().get());
+                    } catch (RuntimeException ex) {
+                        throw violation("node " + i + " threw " + ex);
+                    }
+                    observe(i);
+                }
+            }
+        }
         while (!inFlight.isEmpty() && inFlight.peek().deliverAt() <= now) {
             Envelope e = inFlight.poll();
             if (nodes[e.to()] == null || cut[e.from()][e.to()]) {

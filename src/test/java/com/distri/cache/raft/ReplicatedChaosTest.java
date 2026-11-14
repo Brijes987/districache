@@ -196,4 +196,22 @@ class ReplicatedChaosTest {
         }
         assertTrue(caught > 0, "duplicated or reordered chunks must corrupt some follower and the checks must notice");
     }
+
+    @Test
+    void replicasStillAgreeAndNothingRunsTwiceWhenSnapshotsAreFinishedInTheBackground() {
+        int acknowledged = 0;
+        long taken = 0;
+        long installed = 0;
+        for (long seed = 1_601; seed <= 1_640; seed++) {
+            ReplicatedChaos.Result o = ReplicatedChaos.run(seed, 3_000, Chaos.Profile.brutal(),
+                    RaftConfig.defaults().withSnapshotEvery(8), null, null, true, seed % 2 == 0,
+                    ReplicatedCache.ReadMode.LOG, 30);
+            acknowledged += o.acknowledged;
+            taken += o.snapshotsTaken;
+            installed += o.snapshotsInstalled;
+        }
+        assertTrue(acknowledged > 300, "got " + acknowledged);
+        assertTrue(taken > 0, "no background snapshot was ever committed");
+        assertTrue(installed > 0, "no follower was ever caught up by a snapshot");
+    }
 }

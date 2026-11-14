@@ -89,8 +89,15 @@ final class ReplicatedChaos {
     /** @param readMode LOG: every GET goes through the log; READ_INDEX: GETs use the heartbeat-confirmed read path */
     static Result run(long seed, int steps, Chaos.Profile faults, RaftConfig config, ReplicatedCache.Fault fault,
             Path storageDir, boolean endStateChecks, boolean batching, ReplicatedCache.ReadMode readMode) {
+        return run(seed, steps, faults, config, fault, storageDir, endStateChecks, batching, readMode, -1);
+    }
+
+    /** @param snapshotDelaySteps zero or more: snapshots are prepared by a simulated background worker (see SimCluster) */
+    static Result run(long seed, int steps, Chaos.Profile faults, RaftConfig config, ReplicatedCache.Fault fault,
+            Path storageDir, boolean endStateChecks, boolean batching, ReplicatedCache.ReadMode readMode,
+            int snapshotDelaySteps) {
         int n = seed % 2 == 0 ? 3 : 5;
-        ReplicatedHarness h = new ReplicatedHarness(n, seed, config, storageDir, batching, readMode);
+        ReplicatedHarness h = new ReplicatedHarness(n, seed, config, storageDir, batching, readMode, snapshotDelaySteps);
         if (fault != null) {
             h.faultForAllNodes = fault;
             for (ReplicatedCache c : h.caches) {

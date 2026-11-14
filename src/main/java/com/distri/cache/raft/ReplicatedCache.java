@@ -431,9 +431,31 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
 
     @Override
     public byte[] snapshot() {
-        if (snapshotDelayMillis > 0) {
+        return captureSnapshot().serialize();
+    }
+
+    /**
+     * Copies references to the live entries and sessions (cheap, on the node's thread). The strings are immutable and so are
+     * the session records, so the copy stays exactly as it was while the node goes on applying commands; encoding it into
+     * bytes is left to {@code serialize()}, which can run on any thread.
+     */
+    @Override
+    public SnapshotCapture captureSnapshot() {
+        List<CacheSnapshotEntry<String, String>> entries = cache.snapshotLruToMru();
+        List<Map.Entry<Long, Session>> frozenSessions = new ArrayList<>(sessions.size());
+        for (Map.Entry<Long, Session> e : sessions.entrySet()) {
+            frozenSessions.add(Map.entry(e.getKey(), e.getValue())); // not the live map entry: that one can change
+        }
+        Map<String, Integer> frozenExecutions = executions == null ? null : new HashMap<>(executions);
+        long delay = snapshotDelayMillis;
+        return () -> serializeSnapshot(entries, frozenSessions, frozenExecutions, delay);
+    }
+
+    private static byte[] serializeSnapshot(List<CacheSnapshotEntry<String, String>> entries,
+            List<Map.Entry<Long, Session>> sessions, Map<String, Integer> executions, long delayMillis) {
+        if (delayMillis > 0) {
             try {
-                Thread.sleep(snapshotDelayMillis);
+                Thread.sleep(delayMillis);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -442,7 +464,6 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
             java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
             java.io.DataOutputStream out = new java.io.DataOutputStream(bytes);
             out.writeInt(SNAPSHOT_VERSION);
-            List<CacheSnapshotEntry<String, String>> entries = cache.snapshotLruToMru();
             out.writeInt(entries.size());
             for (CacheSnapshotEntry<String, String> e : entries) {
                 writeString(out, e.key());
@@ -450,7 +471,7 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
                 out.writeLong(e.expiresAtMillis());
             }
             out.writeInt(sessions.size());
-            for (Map.Entry<Long, Session> e : sessions.entrySet()) {
+            for (Map.Entry<Long, Session> e : sessions) {
                 out.writeLong(e.getKey());
                 out.writeLong(e.getValue().lastSeq());
                 Reply r = e.getValue().result();

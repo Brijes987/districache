@@ -196,4 +196,23 @@ class LinearizabilityChaosTest {
         assertTrue(chunks > 0, "chunked InstallSnapshot must have happened in some run");
         assertTrue(ops > 6_000, "too little checked: " + ops);
     }
+
+    @Test
+    void withBackgroundSnapshotsTheSystemIsStillLinearizableUnderFaults() {
+        long taken = 0;
+        int ops = 0;
+        for (long seed = 1_701; seed <= 1_730; seed++) {
+            for (Chaos.Profile profile : new Chaos.Profile[] {Chaos.Profile.normal(), Chaos.Profile.brutal()}) {
+                ReplicatedChaos.Result r = ReplicatedChaos.run(seed, 3_000, profile,
+                        RaftConfig.defaults().withSnapshotEvery(10), null, null, true, seed % 2 == 1,
+                        ReplicatedCache.ReadMode.LOG, 30);
+                LinearizabilityChecker.Result res = checker.check(r.history);
+                assertEquals(Status.LINEARIZABLE, res.status(), "seed " + seed + "\n" + res.explanation());
+                taken += r.snapshotsTaken;
+                ops += r.history.size();
+            }
+        }
+        assertTrue(taken > 0, "background snapshots must have been committed in some run");
+        assertTrue(ops > 6_000, "too little checked: " + ops);
+    }
 }

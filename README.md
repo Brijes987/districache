@@ -124,7 +124,7 @@ in [docs/RAFT.md](docs/RAFT.md).
 - **Raft from scratch**: leader election, log replication, commitment by counting replicas only for current-term entries,
   a no-op entry when a leader takes over, and check-quorum so a cut-off leader steps down.
 - **Durable**: the term, vote and log are stored with checksums and survive crashes, including a torn final write.
-- **Snapshots and log compaction**: the cache and the client sessions are snapshotted every N applied entries (default
+- **Snapshots and log compaction** (encoded and written in the background, so a big snapshot does not stop heartbeats): the cache and the client sessions are snapshotted every N applied entries (default
   10,000) and the log they cover is dropped, so disk use and restart time stop growing with the number of writes. A server
   that was down while the log was compacted is caught up by being sent a snapshot. See
   [docs/SNAPSHOTS.md](docs/SNAPSHOTS.md). Measured on one server after a million overwrites of 10,000 keys: 156 MB on
@@ -316,11 +316,12 @@ cluster has not been tested on separate machines or under real network faults be
 - Done: Prometheus metrics for both server modes
 - Done: group commit for the Raft log, measured before and after (docs/GROUP_COMMIT.md)
 - Done: snapshots and log compaction with InstallSnapshot for lagging servers, measured (docs/SNAPSHOTS.md)
+- Done: snapshots encoded and written off the Raft thread (leadership kept during an 800 ms snapshot in a test; freeze time of 1,000,000 entries 78 ms on one Linux machine)
 - Done: chunked snapshot transfer (1 MiB chunks, acknowledged one at a time; tested including a 42 MB state, above the old 32 MiB limit)
 - Done: opt-in buffered reads with a before/after JMH comparison (docs/READ_BUFFER.md); not yet exposed as a server flag
 - Done: opt-in TLS for the replicated mode (docs/SECURITY.md); cost not measured
 - Done: opt-in read-index reads (`--read-mode read-index`), linearizability-checked and measured (docs/READ_INDEX.md): a large GET gain with fsync on and few clients, none shown otherwise
-- Done (one 2-CPU, 4 GB Windows laptop): GC pauses under G1, Parallel and ZGC and snapshot-taking time by cache size (docs/GC_PAUSES.md). The first runs were probably distorted by memory shortage; with a 1 GiB heap and 500,000 entries the worst stall of any collector was 0.5 s and ZGC stop-the-world pauses were under 2 ms. Not repeated, no larger machine tried. Taking a snapshot of 500,000 entries took 0.86 s, longer than the default election timeout. Tool written but not yet run for results: `RemoteProbe` for separate machines (docs/MULTI_MACHINE.md, results table empty).
+- Done (one 2-CPU, 4 GB Windows laptop): GC pauses under G1, Parallel and ZGC and snapshot-taking time by cache size (docs/GC_PAUSES.md). The first runs were probably distorted by memory shortage; with a 1 GiB heap and 500,000 entries the worst stall of any collector was 0.5 s and ZGC stop-the-world pauses were under 2 ms. Not repeated, no larger machine tried. Before snapshots moved to the background, taking one of 500,000 entries took 0.86 s on that laptop, longer than the default election timeout, and a test showed the leader losing leadership; now only the state-freezing step runs on the Raft thread: 6.2 ms median (worst 6.7) for 100,000 entries and 22.9 ms median (worst 32.1) for 500,000 on that laptop, with encoding (0.88 s median at 500,000) done in the background. In a 3-server test there with an 800 ms snapshot the leader kept term 1 and the slowest write was 19 ms. Freeze time for larger states was not measured there. Tool written but not yet run for results: `RemoteProbe` for separate machines (docs/MULTI_MACHINE.md, results table empty).
 - Not started (ideas, in the order I would do them): measuring the hit-ratio cost of buffered
   reads
 - Dropped: a separate failover monitor process (Raft elects its own leader) and data migration on membership changes

@@ -12,6 +12,22 @@ public interface StateMachine {
         throw new UnsupportedOperationException("this state machine does not support snapshots");
     }
 
+    /** A frozen copy of the state at one moment, from which the snapshot bytes are produced later, on another thread. */
+    interface SnapshotCapture {
+        /** Must not touch the live state machine: it runs while the node goes on applying commands. */
+        byte[] serialize();
+    }
+
+    /**
+     * Freezes the state as of the last applied command and returns something that turns it into snapshot bytes. Called on
+     * the node's thread, so it must be fast: copy references, do not encode. The default does all the work here (the old
+     * behaviour: the node's thread is busy for as long as {@link #snapshot()} takes).
+     */
+    default SnapshotCapture captureSnapshot() {
+        byte[] state = snapshot();
+        return () -> state;
+    }
+
     /**
      * Replaces the whole state with the one in {@code state}. Must either succeed completely or throw before changing
      * anything: it is also called while a node starts up, and a half-restored state would be silently wrong.
