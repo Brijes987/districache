@@ -130,4 +130,70 @@ class LinearizabilityChaosTest {
         assertTrue(installed > 0, "InstallSnapshot must have happened in some run");
         assertTrue(ops > 8_000, "too little checked: " + ops);
     }
+
+    private LinearizabilityChecker.Result runReadIndex(long seed, Chaos.Profile profile, RaftConfig config) {
+        ReplicatedChaos.Result r = ReplicatedChaos.run(seed, 3_000, profile, config, null, null, false, seed % 2 == 1,
+                ReplicatedCache.ReadMode.READ_INDEX);
+        return checker.check(r.history);
+    }
+
+    @Test
+    void withReadIndexReadsTheSystemIsStillLinearizableUnderFaults() {
+        int reads = 0;
+        for (long seed = 1_001; seed <= 1_060; seed++) {
+            for (Chaos.Profile profile : new Chaos.Profile[] {Chaos.Profile.normal(), Chaos.Profile.brutal()}) {
+                ReplicatedChaos.Result r = ReplicatedChaos.run(seed, 3_000, profile,
+                        RaftConfig.defaults().withCheckQuorum(seed % 3 != 0), null, null, true, seed % 2 == 1,
+                        ReplicatedCache.ReadMode.READ_INDEX);
+                LinearizabilityChecker.Result res = checker.check(r.history);
+                assertEquals(Status.LINEARIZABLE, res.status(), "seed " + seed + "\n" + res.explanation());
+                for (Operation op : r.history) {
+                    if (op.kind() == Operation.Kind.GET) {
+                        reads++;
+                    }
+                }
+            }
+        }
+        assertTrue(reads > 3_000, "too few reads checked: " + reads);
+    }
+
+    private int readIndexRunsCaught(RaftConfig.Fault fault, long from, long to, boolean checkQuorum) {
+        int caught = 0;
+        for (long seed = from; seed <= to; seed++) {
+            LinearizabilityChecker.Result res = runReadIndex(seed, Chaos.Profile.brutal(),
+                    RaftConfig.defaults().withCheckQuorum(checkQuorum).withFaults(fault));
+            assertTrue(res.status() != Status.GAVE_UP, "the checker must decide, seed " + seed);
+            if (res.status() == Status.VIOLATION) {
+                caught++;
+            }
+        }
+        return caught;
+    }
+
+    @Test
+    void readIndexWithoutWaitingForTheTermStartEntryIsCaught() {
+        // The leadership-check bugs are rare in random runs (a client has to read from a cut-off leader at the wrong
+        // moment); ReadIndexScenarioTest builds that situation on purpose. This one is common in random runs.
+        int caught = readIndexRunsCaught(RaftConfig.Fault.READ_IGNORE_TERM_START, 1_101, 1_160, true);
+        assertTrue(caught >= 10, "got " + caught + "/60");
+    }
+
+    @Test
+    void withChunkedSnapshotsTheSystemIsStillLinearizableUnderFaults() {
+        long chunks = 0;
+        int ops = 0;
+        for (long seed = 1_501; seed <= 1_530; seed++) {
+            for (Chaos.Profile profile : new Chaos.Profile[] {Chaos.Profile.normal(), Chaos.Profile.brutal()}) {
+                ReplicatedChaos.Result r = ReplicatedChaos.run(seed, 3_000, profile,
+                        RaftConfig.defaults().withSnapshotEvery(10).withSnapshotChunkBytes(24), null, null, true,
+                        seed % 2 == 1);
+                LinearizabilityChecker.Result res = checker.check(r.history);
+                assertEquals(Status.LINEARIZABLE, res.status(), "seed " + seed + "\n" + res.explanation());
+                chunks += r.snapshotChunksReceived;
+                ops += r.history.size();
+            }
+        }
+        assertTrue(chunks > 0, "chunked InstallSnapshot must have happened in some run");
+        assertTrue(ops > 6_000, "too little checked: " + ops);
+    }
 }

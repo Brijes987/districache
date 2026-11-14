@@ -19,8 +19,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * relative costs (durable versus not, one client versus many), not a statement about production capacity. There is no
  * comparison with other systems here because none was measured.
  *
- * <p>Run: {@code java -cp target/classes com.distri.cache.node.ClusterBenchmark [--seconds N] [--max-batch N]} (default 5 per cell;
- * {@code --max-batch 1} switches group commit off, for the before/after comparison).
+ * <p>Run: {@code java -cp target/classes com.distri.cache.node.ClusterBenchmark [--seconds N] [--max-batch N] [--read-mode log|read-index]}
+ * (default 5 per cell; {@code --max-batch 1} switches group commit off, for the before/after comparison;
+ * {@code --read-mode read-index} answers GETs without a log entry, see docs/READ_INDEX.md).
  */
 public final class ClusterBenchmark {
 
@@ -29,20 +30,28 @@ public final class ClusterBenchmark {
     public static void main(String[] args) throws Exception {
         int seconds = 5;
         int maxBatch = 0; // server default
+        String readMode = null; // server default (log)
         for (int i = 0; i < args.length; i++) {
             if (args[i].equals("--seconds")) {
                 seconds = Integer.parseInt(args[++i]);
             } else if (args[i].equals("--max-batch")) {
                 maxBatch = Integer.parseInt(args[++i]);
+            } else if (args[i].equals("--read-mode")) {
+                readMode = args[++i];
+                if (!readMode.equals("log") && !readMode.equals("read-index")) {
+                    System.err.println("--read-mode must be log or read-index");
+                    System.exit(2);
+                }
             } else {
-                System.err.println("usage: ClusterBenchmark [--seconds N] [--max-batch N]");
+                System.err.println("usage: ClusterBenchmark [--seconds N] [--max-batch N] [--read-mode log|read-index]");
                 System.exit(2);
             }
         }
         System.out.println("3 server processes + clients on one machine, loopback TCP, 100-byte values, "
                 + seconds + " s per cell after 1 s warm-up, group commit "
                 + (maxBatch == 0 ? "at the server default (" + ReplicatedServer.DEFAULT_MAX_BATCH + ")"
-                        : maxBatch == 1 ? "OFF (--max-batch 1)" : "--max-batch " + maxBatch));
+                        : maxBatch == 1 ? "OFF (--max-batch 1)" : "--max-batch " + maxBatch)
+                + ", GET read mode " + (readMode == null ? "log (default)" : readMode));
         System.out.println("java " + System.getProperty("java.version") + ", " + Runtime.getRuntime().availableProcessors()
                 + " CPUs, " + System.getProperty("os.name"));
         System.out.println();
@@ -51,6 +60,9 @@ public final class ClusterBenchmark {
         for (boolean fsync : new boolean[] {true, false}) {
             Path root = Files.createTempDirectory("districache-bench");
             try (ClusterLauncher cluster = new ClusterLauncher(3, root, fsync, maxBatch)) {
+                if (readMode != null) {
+                    cluster.setReadMode(readMode);
+                }
                 cluster.startAll();
                 try (ReplicatedClient warm = cluster.newClient(30_000)) {
                     warm.set("warmup", "x");

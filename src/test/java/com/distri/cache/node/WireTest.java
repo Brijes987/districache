@@ -64,7 +64,7 @@ class WireTest {
         assertThrows(IOException.class, () -> RaftMessageCodec.decode(new byte[0]));
         // an entry count far larger than the data could hold
         byte[] huge = valid.clone();
-        huge[1 + 8 + 4 + 8 + 8 + 8] = 0x7f;
+        huge[1 + 8 + 4 + 8 + 8 + 8 + 8] = 0x7f; // type, term, leader, prevIndex, prevTerm, commit, readRound, then the count
         assertThrows(IOException.class, () -> RaftMessageCodec.decode(huge));
         // term 0 is not a valid term
         assertThrows(IOException.class, () -> RaftMessageCodec.decode(
@@ -199,7 +199,7 @@ class WireTest {
             assertThrows(IOException.class, () -> RaftMessageCodec.decode(truncated), "cut at " + cut);
         }
         byte[] badLength = bytes.clone();
-        badLength[1 + 8 + 4 + 8 + 8] = 0x7f; // the length field claims far more than is there
+        badLength[1 + 8 + 4 + 8 + 8 + 8 + 1] = 0x7f; // type, term, leader, index, term, offset, done, then the length: claims far more than is there
         assertThrows(IOException.class, () -> RaftMessageCodec.decode(badLength));
         assertThrows(IOException.class, () -> RaftMessageCodec.decode(
                 RaftMessageCodec.encode(new RaftMessage.InstallSnapshot(9, 2, 0, 8, state))), "index must be positive");
@@ -211,5 +211,63 @@ class WireTest {
         RaftMessage.InstallSnapshot empty = (RaftMessage.InstallSnapshot) RaftMessageCodec.decode(
                 RaftMessageCodec.encode(new RaftMessage.InstallSnapshot(1, 0, 1, 1, new byte[0])));
         assertEquals(0, empty.state().length);
+    }
+
+    @Test
+    void theReadRoundTravelsInBothDirectionsAndANegativeOneIsRejected() throws IOException {
+        RaftMessage.AppendEntries ae = (RaftMessage.AppendEntries) RaftMessageCodec.decode(RaftMessageCodec.encode(
+                new RaftMessage.AppendEntries(4, 1, 7, 3, java.util.List.of(), 6, 123_456_789_012L)));
+        assertEquals(123_456_789_012L, ae.readRound());
+        assertEquals(6, ae.leaderCommit());
+        RaftMessage.AppendEntriesReply ok = (RaftMessage.AppendEntriesReply) RaftMessageCodec.decode(
+                RaftMessageCodec.encode(new RaftMessage.AppendEntriesReply(4, true, 9, 0, 0, 55)));
+        assertEquals(55, ok.readRound());
+        assertEquals(9, ok.matchIndex());
+        RaftMessage.AppendEntriesReply no = (RaftMessage.AppendEntriesReply) RaftMessageCodec.decode(
+                RaftMessageCodec.encode(new RaftMessage.AppendEntriesReply(4, false, 0, 3, 2, 66)));
+        assertEquals(66, no.readRound());
+        assertEquals(3, no.conflictIndex());
+        byte[] negative = RaftMessageCodec.encode(new RaftMessage.AppendEntriesReply(4, true, 9, 0, 0, 1));
+        java.util.Arrays.fill(negative, negative.length - 8, negative.length, (byte) 0xff);
+        assertThrows(IOException.class, () -> RaftMessageCodec.decode(negative));
+    }
+
+    @Test
+    void aSnapshotChunkAndItsReplySurviveTheWireAndBadOnesAreRejected() throws IOException {
+        byte[] data = new byte[300];
+        new Random(8).nextBytes(data);
+        RaftMessage.InstallSnapshot chunk = (RaftMessage.InstallSnapshot) RaftMessageCodec.decode(
+                RaftMessageCodec.encode(new RaftMessage.InstallSnapshot(7, 1, 500, 6, 4_096, data, true)));
+        assertEquals(4_096, chunk.offset());
+        assertTrue(chunk.done());
+        org.junit.jupiter.api.Assertions.assertArrayEquals(data, chunk.data());
+        RaftMessage.InstallSnapshot middle = (RaftMessage.InstallSnapshot) RaftMessageCodec.decode(
+                RaftMessageCodec.encode(new RaftMessage.InstallSnapshot(7, 1, 500, 6, 0, data, false)));
+        assertTrue(!middle.done());
+
+        RaftMessage.SnapshotChunkReply reply = (RaftMessage.SnapshotChunkReply) RaftMessageCodec.decode(
+                RaftMessageCodec.encode(new RaftMessage.SnapshotChunkReply(7, 500, 8_192)));
+        assertEquals(7, reply.term());
+        assertEquals(500, reply.lastIncludedIndex());
+        assertEquals(8_192, reply.nextOffset());
+
+        assertThrows(IOException.class, () -> RaftMessageCodec.decode(
+                RaftMessageCodec.encode(new RaftMessage.InstallSnapshot(7, 1, 500, 6, -1, data, false))), "negative offset");
+        assertThrows(IOException.class, () -> RaftMessageCodec.decode(RaftMessageCodec.encode(
+                new RaftMessage.InstallSnapshot(7, 1, 500, 6, com.distri.cache.raft.RaftStorage.MAX_SNAPSHOT_BYTES - 10,
+                        data, false))), "offset + length beyond the largest snapshot");
+        assertThrows(IOException.class, () -> RaftMessageCodec.decode(RaftMessageCodec.encode(
+                new RaftMessage.InstallSnapshot(7, 1, 500, 6, 0,
+                        new byte[com.distri.cache.raft.RaftStorage.MAX_SNAPSHOT_CHUNK_BYTES + 1], false))),
+                "a chunk larger than the chunk limit");
+        assertThrows(IOException.class, () -> RaftMessageCodec.decode(
+                RaftMessageCodec.encode(new RaftMessage.SnapshotChunkReply(7, 0, 5))), "index must be positive");
+        assertThrows(IOException.class, () -> RaftMessageCodec.decode(
+                RaftMessageCodec.encode(new RaftMessage.SnapshotChunkReply(7, 5, -1))), "offset must not be negative");
+        byte[] bytes = RaftMessageCodec.encode(new RaftMessage.SnapshotChunkReply(7, 500, 8_192));
+        for (int cut = 0; cut < bytes.length; cut++) {
+            byte[] truncated = java.util.Arrays.copyOf(bytes, cut);
+            assertThrows(IOException.class, () -> RaftMessageCodec.decode(truncated), "cut at " + cut);
+        }
     }
 }

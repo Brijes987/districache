@@ -111,7 +111,7 @@ executing twice.
 flowchart TD
     A["Leader needs to send entries<br/>from index i to a follower"] --> B{"Is i still in the leader's log?"}
     B -- yes --> C["AppendEntries"]
-    B -- "no: compacted into the snapshot" --> D["InstallSnapshot<br/>(one message, up to 32 MiB)"]
+    B -- "no: compacted into the snapshot" --> D["InstallSnapshot<br/>(chunks, one at a time, up to 128 MiB)"]
     D --> E{"Follower already past<br/>the snapshot?"}
     E -- yes --> F["Acknowledge, do not install"]
     E -- no --> G["restore state machine,<br/>then storage.installSnapshot"]

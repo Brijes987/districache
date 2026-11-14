@@ -15,9 +15,21 @@ import java.util.Set;
  * @param faults deliberate bugs, for testing the tests; empty in real use
  * @param snapshotEvery take a snapshot (and drop the log it covers) once this many entries have been applied since the
  *     last one; 0 turns snapshots off
+ * @param snapshotChunkBytes largest piece of a snapshot sent in one message (at most
+ *     {@link RaftStorage#MAX_SNAPSHOT_CHUNK_BYTES}); a bigger snapshot is sent as several chunks, one in flight at a time
  */
 public record RaftConfig(int electionTimeoutMinTicks, int electionTimeoutMaxTicks, int heartbeatTicks,
-        int maxEntriesPerMessage, boolean checkQuorum, Set<Fault> faults, int snapshotEvery) {
+        int maxEntriesPerMessage, boolean checkQuorum, Set<Fault> faults, int snapshotEvery, int snapshotChunkBytes) {
+
+    /** Default size of a snapshot chunk. */
+    public static final int DEFAULT_SNAPSHOT_CHUNK_BYTES = 1024 * 1024;
+
+    /** With the default chunk size. */
+    public RaftConfig(int electionTimeoutMinTicks, int electionTimeoutMaxTicks, int heartbeatTicks,
+            int maxEntriesPerMessage, boolean checkQuorum, Set<Fault> faults, int snapshotEvery) {
+        this(electionTimeoutMinTicks, electionTimeoutMaxTicks, heartbeatTicks, maxEntriesPerMessage, checkQuorum,
+                faults, snapshotEvery, DEFAULT_SNAPSHOT_CHUNK_BYTES);
+    }
 
     /** Without snapshots. */
     public RaftConfig(int electionTimeoutMinTicks, int electionTimeoutMaxTicks, int heartbeatTicks,
@@ -39,7 +51,15 @@ public record RaftConfig(int electionTimeoutMinTicks, int electionTimeoutMaxTick
         /** A follower installs a snapshot that is older than what it has already committed, rolling its state back. */
         INSTALL_STALE_SNAPSHOT,
         /** A node takes a snapshot of the state BEFORE applying the entry it says the snapshot covers. */
-        SNAPSHOT_BEFORE_APPLY
+        SNAPSHOT_BEFORE_APPLY,
+        /** A leader answers a read-index read without checking that a majority still follows it. */
+        READ_SKIP_LEADERSHIP_CHECK,
+        /** A read-index read does not wait for the leader's first entry of its term to commit. */
+        READ_IGNORE_TERM_START,
+        /** A read-index read counts any earlier acknowledgement as proof of leadership, not one sent after the read. */
+        READ_COUNT_OLD_ACKS,
+        /** A follower appends a snapshot chunk wherever it arrives, ignoring its offset (duplicates and reordering corrupt it). */
+        SNAPSHOT_CHUNK_IGNORE_OFFSET
     }
 
     public RaftConfig {
@@ -55,6 +75,9 @@ public record RaftConfig(int electionTimeoutMinTicks, int electionTimeoutMaxTick
         if (snapshotEvery < 0) {
             throw new IllegalArgumentException("snapshotEvery must not be negative");
         }
+        if (snapshotChunkBytes <= 0 || snapshotChunkBytes > RaftStorage.MAX_SNAPSHOT_CHUNK_BYTES) {
+            throw new IllegalArgumentException("snapshotChunkBytes must be in 1.." + RaftStorage.MAX_SNAPSHOT_CHUNK_BYTES);
+        }
         faults = Set.copyOf(faults);
     }
 
@@ -66,17 +89,23 @@ public record RaftConfig(int electionTimeoutMinTicks, int electionTimeoutMaxTick
         Set<Fault> set = EnumSet.noneOf(Fault.class);
         set.addAll(java.util.Arrays.asList(faults));
         return new RaftConfig(electionTimeoutMinTicks, electionTimeoutMaxTicks, heartbeatTicks, maxEntriesPerMessage,
-                checkQuorum, set, snapshotEvery);
+                checkQuorum, set, snapshotEvery, snapshotChunkBytes);
     }
 
     public RaftConfig withCheckQuorum(boolean value) {
         return new RaftConfig(electionTimeoutMinTicks, electionTimeoutMaxTicks, heartbeatTicks, maxEntriesPerMessage,
-                value, faults, snapshotEvery);
+                value, faults, snapshotEvery, snapshotChunkBytes);
     }
 
     /** Snapshot after every {@code entries} applied entries (0 = never). */
     public RaftConfig withSnapshotEvery(int entries) {
         return new RaftConfig(electionTimeoutMinTicks, electionTimeoutMaxTicks, heartbeatTicks, maxEntriesPerMessage,
-                checkQuorum, faults, entries);
+                checkQuorum, faults, entries, snapshotChunkBytes);
+    }
+
+    /** Send snapshots in chunks of at most {@code bytes}. */
+    public RaftConfig withSnapshotChunkBytes(int bytes) {
+        return new RaftConfig(electionTimeoutMinTicks, electionTimeoutMaxTicks, heartbeatTicks, maxEntriesPerMessage,
+                checkQuorum, faults, snapshotEvery, bytes);
     }
 }

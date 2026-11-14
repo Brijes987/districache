@@ -16,6 +16,7 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
     ReplicatedCache.Fault faultForAllNodes;
 
     private final Path storageDir; // null: keep Raft state in memory
+    private final ReplicatedCache.ReadMode readMode;
     private final boolean batching; // group commit: requests wait in a queue until flushAll()
     private final Random tornTails;
     private final FileRaftStorage[] files;
@@ -34,6 +35,12 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
     }
 
     ReplicatedHarness(int n, long seed, RaftConfig config, Path storageDir, boolean batching) {
+        this(n, seed, config, storageDir, batching, ReplicatedCache.ReadMode.LOG);
+    }
+
+    ReplicatedHarness(int n, long seed, RaftConfig config, Path storageDir, boolean batching,
+            ReplicatedCache.ReadMode readMode) {
+        this.readMode = readMode;
         this.batching = batching;
         this.storageDir = storageDir;
         this.tornTails = new Random(seed * 17 + 3);
@@ -46,6 +53,7 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
     public StateMachine create(int node) {
         caches[node] = new ReplicatedCache(1_000, 100, System::currentTimeMillis, true);
         caches[node].setBatching(batching);
+        caches[node].setReadMode(readMode);
         if (faultForAllNodes != null) {
             caches[node].injectFault(faultForAllNodes);
         }
@@ -62,6 +70,7 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
     public void stopped(int node) {
         snapshotsTaken += rafts[node].snapshotsTaken();
         snapshotsInstalled += rafts[node].snapshotsInstalled();
+        snapshotChunksReceived += rafts[node].snapshotChunksReceived();
         rafts[node] = null;
         collect(caches[node]);
         caches[node].close();
@@ -131,6 +140,7 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
     final RaftNode[] rafts = new RaftNode[8];
     long snapshotsTaken;
     long snapshotsInstalled;
+    long snapshotChunksReceived;
     long batches;
     long batchedEntries;
     long largestBatch;
@@ -147,6 +157,7 @@ final class ReplicatedHarness implements SimCluster.NodeFactory {
             if (r != null) {
                 snapshotsTaken += r.snapshotsTaken();
                 snapshotsInstalled += r.snapshotsInstalled();
+                snapshotChunksReceived += r.snapshotChunksReceived();
             }
         }
         for (ReplicatedCache c : caches) {

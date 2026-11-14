@@ -11,8 +11,15 @@ import java.util.List;
  */
 public interface RaftStorage {
 
-    /** Largest snapshot that is taken, sent or stored: it travels in one message (the wire limit is 64 MiB). */
-    int MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+    /**
+     * Largest snapshot that is taken, sent or stored. A snapshot is held in memory as one array on the leader (while it
+     * is sent) and on a follower (while it is assembled), so this is a memory limit, not a wire limit: it travels in
+     * chunks of at most {@link #MAX_SNAPSHOT_CHUNK_BYTES}.
+     */
+    int MAX_SNAPSHOT_BYTES = 128 * 1024 * 1024;
+
+    /** Largest piece of a snapshot in one message; also what the wire format accepts. */
+    int MAX_SNAPSHOT_CHUNK_BYTES = 4 * 1024 * 1024;
 
     /** The state machine as of log index {@code index} (whose entry had term {@code term}). */
     record Snapshot(long index, long term, byte[] state) {}

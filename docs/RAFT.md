@@ -176,9 +176,9 @@ All commands assume the project is built (`mvn compile`) and you are in the proj
 
 - Not formally proven or model-checked. The claim is: tested with randomized fault injection against stated invariants.
 - Linearizability is checked on recorded histories from the simulator and from a local cluster, under the faults those tests inject. It is not a proof, and it has not been checked on separate machines or under real network faults other than the partitions and kills described above.
-- No encryption of peer or client traffic, and no TLS for the replicated mode (the existing single-server mode has TLS). Use a trusted network or a tunnel.
-- Reads go through the log, so they are as costly as writes; there is no read-index or lease optimisation.
-- No snapshots or log compaction: disk use and restart time grow with the number of writes.
+- TLS for the replicated mode is optional (`--tls-*` options, see SECURITY.md) and its cost is unmeasured. Without it, peer and client traffic is not encrypted.
+- By default reads go through the log, so they are as costly as writes. `--read-mode read-index` avoids that (READ_INDEX.md); its gain is measured, and only clear with fsync on and few clients. There is no lease optimisation.
+- Snapshots and log compaction exist (SNAPSHOTS.md); a snapshot is sent in chunks and limited to 128 MiB (SNAPSHOTS.md).
 - The group is fixed; servers cannot be added or removed while it runs.
 
 ## Why not a monitor-based failover or data migration

@@ -20,6 +20,13 @@ import java.util.Map;
  * --no-fsync                   do not force writes to disk (FASTER, NOT DURABLE: only for experiments)
  * --max-batch N               group commit: up to N queued client requests share one log write and fsync
  *                              (default 256; 1 = every request is fsynced alone)
+ * --read-mode MODE            how GETs are made linearizable: log (default; every GET is a log entry) or read-index
+ *                              (the leader confirms leadership with a heartbeat round and answers without a log write)
+ * --tls-keystore F            encrypt the peer and client ports with TLS: PKCS12 file with this server's key and certificate
+ * --tls-keystore-password-file F   file holding the keystore password
+ * --tls-truststore F          PKCS12 file with the certificate(s) to trust (servers authenticate each other with it)
+ * --tls-truststore-password-file F  file holding the truststore password
+ *                              (all four TLS options go together; see docs/SECURITY.md)
  * --snapshot-every N          snapshot the cache and drop the log it covers after every N applied entries
  *                              (default 10000; 0 = never: the log then grows without bound)
  * --metrics-port P             serve Prometheus metrics at http://127.0.0.1:P/metrics (--metrics-host H to bind elsewhere;
@@ -45,6 +52,11 @@ public final class ReplicatedServerMain {
         boolean fsync = true;
         int maxBatch = ReplicatedServer.DEFAULT_MAX_BATCH;
         int snapshotEvery = 10_000;
+        com.distri.cache.raft.ReplicatedCache.ReadMode readMode = com.distri.cache.raft.ReplicatedCache.ReadMode.LOG;
+        String tlsKeystore = null;
+        String tlsKeystorePasswordFile = null;
+        String tlsTruststore = null;
+        String tlsTruststorePasswordFile = null;
         String metricsHost = "127.0.0.1";
         int metricsPort = -1;
         try {
@@ -60,6 +72,15 @@ public final class ReplicatedServerMain {
                     case "--no-fsync" -> fsync = false;
                     case "--max-batch" -> maxBatch = Integer.parseInt(value(args, ++i));
                     case "--snapshot-every" -> snapshotEvery = Integer.parseInt(value(args, ++i));
+                    case "--read-mode" -> readMode = switch (value(args, ++i)) {
+                        case "log" -> com.distri.cache.raft.ReplicatedCache.ReadMode.LOG;
+                        case "read-index" -> com.distri.cache.raft.ReplicatedCache.ReadMode.READ_INDEX;
+                        default -> throw new IllegalArgumentException("--read-mode must be log or read-index");
+                    };
+                    case "--tls-keystore" -> tlsKeystore = value(args, ++i);
+                    case "--tls-keystore-password-file" -> tlsKeystorePasswordFile = value(args, ++i);
+                    case "--tls-truststore" -> tlsTruststore = value(args, ++i);
+                    case "--tls-truststore-password-file" -> tlsTruststorePasswordFile = value(args, ++i);
                     case "--metrics-port" -> metricsPort = Integer.parseInt(value(args, ++i));
                     case "--metrics-host" -> metricsHost = value(args, ++i);
                     default -> throw new IllegalArgumentException("unknown option " + args[i]);
@@ -68,10 +89,16 @@ public final class ReplicatedServerMain {
             if (id < 0 || membersText == null || dataDir == null) {
                 throw new IllegalArgumentException("--id, --members and --data are required");
             }
+            int tlsOptions = (tlsKeystore != null ? 1 : 0) + (tlsKeystorePasswordFile != null ? 1 : 0)
+                    + (tlsTruststore != null ? 1 : 0) + (tlsTruststorePasswordFile != null ? 1 : 0);
+            if (tlsOptions != 0 && tlsOptions != 4) {
+                throw new IllegalArgumentException("the four --tls-* options must all be given, or none");
+            }
         } catch (IllegalArgumentException e) {
             System.err.println("error: " + e.getMessage());
             System.err.println("usage: ReplicatedServerMain --id N --members 0=host:peerPort:clientPort,... --data DIR"
-                    + " [--peer-secret-file F] [--client-secret-file F] [--tick-ms N] [--capacity N] [--no-fsync] [--max-batch N] [--snapshot-every N]"
+                    + " [--peer-secret-file F] [--client-secret-file F] [--tick-ms N] [--capacity N] [--no-fsync] [--max-batch N] [--snapshot-every N] [--read-mode log|read-index]"
+                    + " [--tls-keystore F --tls-keystore-password-file F --tls-truststore F --tls-truststore-password-file F]"
                     + " [--metrics-port P [--metrics-host H]]");
             System.exit(2);
             return;
@@ -89,7 +116,14 @@ public final class ReplicatedServerMain {
         if (config.peerSecret() == null) {
             System.err.println("WARNING: no --peer-secret-file: anyone who can reach the peer port can inject Raft messages.");
         }
-        ReplicatedServer server = new ReplicatedServer(config).setMaxBatch(maxBatch);
+        ReplicatedServer server = new ReplicatedServer(config).setMaxBatch(maxBatch).setReadMode(readMode);
+        if (tlsKeystore != null) {
+            server.setTls(com.distri.cache.server.Tls.mutualContext(Path.of(tlsKeystore),
+                    readPassword(tlsKeystorePasswordFile), Path.of(tlsTruststore),
+                    readPassword(tlsTruststorePasswordFile)));
+        } else {
+            System.err.println("WARNING: no --tls-* options: peer and client traffic is not encrypted.");
+        }
         com.distri.cache.metrics.MetricsServer metricsServer = null;
         if (metricsPort >= 0) {
             com.distri.cache.metrics.MetricsRegistry registry = new com.distri.cache.metrics.MetricsRegistry();
@@ -120,6 +154,10 @@ public final class ReplicatedServerMain {
             throw new IllegalArgumentException("missing value for " + args[index - 1]);
         }
         return args[index];
+    }
+
+    private static char[] readPassword(String file) throws IOException {
+        return new String(readSecret(file), java.nio.charset.StandardCharsets.UTF_8).toCharArray();
     }
 
     private static byte[] readSecret(String file) throws IOException {

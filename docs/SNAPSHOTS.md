@@ -13,9 +13,31 @@ itself stayed the same size (for example a million overwrites of ten thousand ke
   entry is evicted next), and the client sessions (last sequence number and reply per client), so a retry after a
   snapshot is still executed at most once.
 - **Restart.** The server loads its snapshot, rebuilds the cache from it and continues with the log entries after it.
-- **Catching up.** If a follower needs entries the leader has already dropped, the leader sends its snapshot in one
-  `InstallSnapshot` message (retried at most every half election timeout, not at every heartbeat). The follower restores
-  its state machine from it, stores it durably, and then continues with normal replication.
+- **Catching up.** If a follower needs entries the leader has already dropped, the leader sends its snapshot as a
+  series of `InstallSnapshot` chunks (see "Chunked transfer" below). The follower assembles them, restores its state
+  machine, stores the snapshot durably, and then continues with normal replication.
+
+## Chunked transfer
+- The leader sends one chunk (default 1 MiB, `RaftConfig.snapshotChunkBytes`, 1 byte to 4 MiB) and waits for the follower's
+  reply, which says how many bytes it holds; the next chunk is sent when that number moves forward. Duplicate or late
+  replies are ignored, so duplicated network messages cannot multiply chunks.
+- If no reply comes within half an election timeout the leader resends from the follower's last reported position.
+- The follower accepts a chunk only at exactly the offset it holds. A duplicate or a gap gets a reply with the offset it
+  needs. A transfer is identified by (term, leader, snapshot index, snapshot term): chunks of two different transfers are
+  never mixed, and a half-received snapshot is dropped when a newer term starts.
+- If the leader takes a newer snapshot meanwhile, the transfer starts over from offset 0 with the new one.
+- Cap: the whole snapshot is still held in memory by the sender and the receiver, so it is limited to 128 MiB
+  (`RaftStorage.MAX_SNAPSHOT_BYTES`); each chunk is limited to 4 MiB on the wire.
+- Tests: unit tests of the sender and receiver (`ChunkedSnapshotTest`), wire format tests, chaos runs with 5-byte and
+  24-byte chunks over a lossy, reordering, duplicating network (`RaftChaosTest`, `ReplicatedChaosTest`, a linearizability
+  run), and real servers (`ChunkedSnapshotClusterTest`: 16 KiB chunks, and a 42 MB state, above the former 32 MiB limit).
+- Mutation check: 13 hand-made breakages of the chunk code (offset check removed, new transfer not starting at 0, transfers
+  not tied to a leader and term, no restart on a newer snapshot, every duplicate ack sending a chunk, no resend from the
+  follower position, final chunk never marked done, size cap removed, replies for another snapshot accepted, no wait
+  between resends, finished transfer kept in memory, ...) were each run against the tests. Three first survived, and
+  tests were added for them. Two of them (a transfer not tied to leader and term; a half-received snapshot kept across a
+  new term) protect the same case, so each alone is invisible; removing both together is caught.
+- Not measured: how long a transfer takes, or its effect on the leader while it runs.
 
 ## Files
 - `raft.snapshot`: `magic | index | term | length | state | CRC-32`, replaced by write-temp, force, atomic rename.
@@ -90,11 +112,13 @@ repeatedly; one run per row.
   ratios.
 - Restart here is the time to open the files and rebuild the cache in one process. It does not include starting the
   JVM or reconnecting to other servers, and a server that was far behind still needs a snapshot or log catch-up after it.
-- The measurements say nothing about the pause while a snapshot is being taken; that is not measured.
+- The measurements say nothing about the pause while a snapshot is being taken; that is not measured (tool: `SnapshotPauseBenchmark`, docs/GC_PAUSES.md).
 
 ## Limits
-- A snapshot is one message, at most 32 MiB. A larger state is not snapshotted (the log keeps growing, counted in
-  `snapshots_skipped`); chunked transfer is not implemented.
+- A snapshot is held in memory in one piece on both ends, at most 128 MiB. A larger state is not snapshotted (the log keeps
+  growing, counted in `snapshots_skipped`). Streaming from and to disk is not implemented.
+- Only one chunk is in flight per follower, so on a high-latency link a transfer is slow (round trip per chunk); unmeasured.
+- The InstallSnapshot wire format changed (chunks); servers of different builds cannot be mixed.
 - A follower only slightly behind when a snapshot is taken is sent the whole snapshot rather than the few entries it
   misses (no trailing entries are kept).
 - Taking a snapshot copies the whole state while the node's thread is busy with it, so very large caches will pause that

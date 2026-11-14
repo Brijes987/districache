@@ -130,6 +130,13 @@ in [docs/RAFT.md](docs/RAFT.md).
   [docs/SNAPSHOTS.md](docs/SNAPSHOTS.md). Measured on one server after a million overwrites of 10,000 keys: 156 MB on
   disk and a 2.6 s restart without snapshots, against 1.2 MB and 140 ms with them (single run; see the doc for the
   other write counts and caveats).
+- **Read-index reads (opt-in)**: `--read-mode read-index` answers a GET from the leader after a heartbeat round
+  confirms it is still the leader, without writing to the log. Linearizability-checked under faults and tested against
+  14 hand-made breakages. Measured: with fsync on and 1 or 8 clients, GET went 258 to 3,135 and 831 to 5,662 ops/s; with fsync off or 32 clients
+  the difference is inside the run-to-run noise. See [docs/READ_INDEX.md](docs/READ_INDEX.md).
+- **TLS for the replicated mode (opt-in)**: `--tls-keystore/--tls-truststore` (+ password files) encrypt the client port and
+  the peer port; servers authenticate each other by certificate (mutual TLS), clients check the certificate and host name.
+  Proven on the wire with a recording proxy and tested against 10 hand-made breakages; its cost is not measured. See [docs/SECURITY.md](docs/SECURITY.md).
 - **Exactly-once client retries**: clients carry a session id and sequence number, so a retry after a lost reply or a
   leader change takes effect at most once.
 - **Reads go through the log**, so they are linearizable but cost about as much as writes (see the benchmark below).
@@ -216,7 +223,7 @@ requests by outcome. Latency percentiles are bucket-edge estimates of server-sid
 ```bash
 mvn clean test
 ```
-489 tests, 0 failures at the time of writing, run on every push by GitHub Actions.
+All tests pass at the time of writing (`mvn test` prints the current count), run on every push by GitHub Actions.
 
 ## Benchmarks
 Single-node cache throughput uses JMH:
@@ -279,15 +286,20 @@ cluster has not been tested on separate machines or under real network faults be
 
 **Replicated cluster (docs/RAFT.md)**
 - Not formally verified or model-checked.
-- No TLS or encryption for peer or client traffic in this mode (the single server has TLS). Use a trusted network or a tunnel.
-- Reads go through the log, so they cost as much as writes. There is no read-index or lease optimisation.
+- TLS for this mode is optional and off by default; all servers share one certificate in the documented setup, there is
+  no certificate reloading or revocation, the metrics endpoint has no TLS, and the cost of TLS is not measured.
+- By default reads go through the log, so they cost as much as writes. `--read-mode read-index` answers them from the
+  leader after a heartbeat round, with no log write (docs/READ_INDEX.md); it is much faster for GETs only with fsync on and few clients, and only the
+  leader serves reads. There is no lease optimisation.
 - Group commit batches only requests that are already waiting (there is no deliberate delay), so a single client still
   pays one sync per write (measured: no gain with one client).
-- A snapshot travels in one message and is limited to 32 MiB; a larger cache is not snapshotted and its log keeps
-  growing (counted by `districache_raft_snapshots_skipped`). A follower that is only slightly behind when a snapshot is
-  taken is also sent the whole snapshot rather than the few entries it misses. See docs/SNAPSHOTS.md.
+- A snapshot is sent in chunks (1 MiB by default, one in flight per follower), but it is still built and held in memory on both
+  ends and limited to 128 MiB; a larger cache is not snapshotted and its log keeps growing (counted by
+  `districache_raft_snapshots_skipped`). The speed of chunked transfer is not measured. A follower that is only slightly
+  behind when a snapshot is taken is also sent the whole snapshot rather than the few entries it misses. See docs/SNAPSHOTS.md.
+- The chunked InstallSnapshot is a new wire format: servers of an older build cannot be mixed with it.
 - The group is fixed: servers cannot be added or removed while it runs. There is no data migration.
-- Tested on one machine only. Failover time and throughput on separate machines or a real network are unmeasured.
+- Tested on one machine only. Failover time and throughput on separate machines or a real network are unmeasured (procedure and tool: docs/MULTI_MACHINE.md).
 
 **Metrics**
 - Latency is server-side processing time and percentiles are bucket-edge estimates. Evictions are not counted.
@@ -304,7 +316,11 @@ cluster has not been tested on separate machines or under real network faults be
 - Done: Prometheus metrics for both server modes
 - Done: group commit for the Raft log, measured before and after (docs/GROUP_COMMIT.md)
 - Done: snapshots and log compaction with InstallSnapshot for lagging servers, measured (docs/SNAPSHOTS.md)
+- Done: chunked snapshot transfer (1 MiB chunks, acknowledged one at a time; tested including a 42 MB state, above the old 32 MiB limit)
 - Done: opt-in buffered reads with a before/after JMH comparison (docs/READ_BUFFER.md); not yet exposed as a server flag
+- Done: opt-in TLS for the replicated mode (docs/SECURITY.md); cost not measured
+- Done: opt-in read-index reads (`--read-mode read-index`), linearizability-checked and measured (docs/READ_INDEX.md): a large GET gain with fsync on and few clients, none shown otherwise
+- Tools written, not yet run for results: `GcPauseBenchmark` and `SnapshotPauseBenchmark` (docs/GC_PAUSES.md) and `RemoteProbe` for a run on separate machines (docs/MULTI_MACHINE.md). Both docs have empty result tables marked "not measured".
 - Not started (ideas, in the order I would do them): measuring the hit-ratio cost of buffered
-  reads; read-index reads; TLS for the replicated mode; a test on separate machines
+  reads
 - Dropped: a separate failover monitor process (Raft elects its own leader) and data migration on membership changes

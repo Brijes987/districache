@@ -103,6 +103,8 @@ public final class ReplicatedServer implements AutoCloseable {
     private volatile boolean closed;
     private volatile NodeMetrics metrics; // null: metrics off
     private int maxBatch = DEFAULT_MAX_BATCH;
+    private ReplicatedCache.ReadMode readMode = ReplicatedCache.ReadMode.LOG;
+    private javax.net.ssl.SSLContext tls; // null: plain TCP on both ports
 
     public ReplicatedServer(Config config) {
         this.config = config;
@@ -133,6 +135,31 @@ public final class ReplicatedServer implements AutoCloseable {
         return this;
     }
 
+    /**
+     * Encrypts both ports with TLS. The peer port then also requires every connecting server to present a certificate
+     * the context trusts; the client port only authenticates this server to the client. The shared-secret handshakes
+     * still run on top. Call before {@link #start()}; see {@link com.distri.cache.server.Tls#mutualContext}.
+     */
+    public synchronized ReplicatedServer setTls(javax.net.ssl.SSLContext context) {
+        if (runtime != null) {
+            throw new IllegalStateException("call setTls before start()");
+        }
+        this.tls = java.util.Objects.requireNonNull(context);
+        return this;
+    }
+
+    /**
+     * How GETs are made linearizable: through the log (default) or by read-index (a heartbeat round, no log write).
+     * Call before {@link #start()}.
+     */
+    public synchronized ReplicatedServer setReadMode(ReplicatedCache.ReadMode mode) {
+        if (runtime != null) {
+            throw new IllegalStateException("call setReadMode before start()");
+        }
+        this.readMode = java.util.Objects.requireNonNull(mode);
+        return this;
+    }
+
     public void start() throws IOException {
         Member self = config.members().get(config.id());
         storage = new FileRaftStorage(config.dataDir(), config.fsync());
@@ -147,10 +174,11 @@ public final class ReplicatedServer implements AutoCloseable {
             }
             cache = new ReplicatedCache(config.cacheCapacity(), 10_000, System::currentTimeMillis);
             transport = new PeerTransport(config.id(), peerAddresses, config.peerSecret(),
-                    (from, message) -> runtime.deliver(from, message));
+                    (from, message) -> runtime.deliver(from, message), tls);
             RaftNode node = new RaftNode(config.id(), peerIds, storage, transport, cache, config.raft(),
                     new Random(System.nanoTime() ^ config.id()));
             cache.attach(node);
+            cache.setReadMode(readMode);
             runtime = new NodeRuntime(node, cache, config.tickMillis(), maxBatch, this::close);
             transport.start(self.host(), self.peerPort());
             clientListener = new ServerSocket();
@@ -245,8 +273,9 @@ public final class ReplicatedServer implements AutoCloseable {
             clientSockets.add(socket);
             socket.setTcpNoDelay(true);
             socket.setSoTimeout(3_000);
-            DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
-            DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
+            Socket io = tls == null ? socket : com.distri.cache.server.Tls.acceptTls(tls, socket, false);
+            DataInputStream in = new DataInputStream(new BufferedInputStream(io.getInputStream()));
+            DataOutputStream out = new DataOutputStream(new BufferedOutputStream(io.getOutputStream()));
             byte[] hello = Frames.read(in, 256);
             if (hello.length < 4 || !CLIENT_ROLE.equals(new String(hello, 0, hello.length - 4,
                     java.nio.charset.StandardCharsets.UTF_8))) {

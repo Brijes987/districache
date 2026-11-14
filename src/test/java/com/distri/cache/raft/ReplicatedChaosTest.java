@@ -162,4 +162,38 @@ class ReplicatedChaosTest {
         assertTrue(runsCaught(RaftConfig.Fault.INSTALL_STALE_SNAPSHOT, 951, 990) > 0,
                 "rolling a follower's state back must be noticed");
     }
+
+    @Test
+    void snapshotsSentInChunksStillLeaveReplicasInAgreementAndNothingRunsTwice() {
+        int acknowledged = 0;
+        long installed = 0;
+        long chunks = 0;
+        for (long seed = 1_301; seed <= 1_340; seed++) {
+            ReplicatedChaos.Result o = ReplicatedChaos.run(seed, 3_000, Chaos.Profile.brutal(),
+                    RaftConfig.defaults().withSnapshotEvery(10).withSnapshotChunkBytes(24), null, null, true,
+                    seed % 2 == 0);
+            acknowledged += o.acknowledged;
+            installed += o.snapshotsInstalled;
+            chunks += o.snapshotChunksReceived;
+        }
+        assertTrue(acknowledged > 300, "got " + acknowledged);
+        assertTrue(installed > 0, "no follower was ever caught up by a snapshot");
+        assertTrue(chunks > installed, "snapshots must really have been split: " + chunks + " chunks for " + installed
+                + " installs");
+    }
+
+    @Test
+    void aFollowerThatAppendsSnapshotChunksWhereverTheyArriveIsCaught() {
+        int caught = 0;
+        for (long seed = 1_401; seed <= 1_440; seed++) {
+            try {
+                ReplicatedChaos.run(seed, 3_000, Chaos.Profile.brutal(), RaftConfig.defaults().withSnapshotEvery(8)
+                        .withSnapshotChunkBytes(24).withFaults(RaftConfig.Fault.SNAPSHOT_CHUNK_IGNORE_OFFSET), null, null,
+                        true, seed % 2 == 0);
+            } catch (AssertionError | RuntimeException e) {
+                caught++;
+            }
+        }
+        assertTrue(caught > 0, "duplicated or reordered chunks must corrupt some follower and the checks must notice");
+    }
 }

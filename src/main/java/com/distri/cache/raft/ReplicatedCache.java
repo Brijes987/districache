@@ -3,11 +3,14 @@ package com.distri.cache.raft;
 import com.distri.cache.CacheSnapshotEntry;
 import com.distri.cache.LRUCache;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.LongSupplier;
@@ -15,9 +18,12 @@ import java.util.function.LongSupplier;
 /**
  * The cache as a Raft state machine, plus the front end a client talks to on the leader.
  *
- * <p><b>Writes and reads both go through the log.</b> A request is appended on the leader, replicated to a majority,
- * committed, applied to the cache in log order, and only then answered. Reading through the log makes every GET
- * linearizable without any lease or clock reasoning, at the price of a log round trip per read.
+ * <p><b>Writes always go through the log.</b> A request is appended on the leader, replicated to a majority,
+ * committed, applied to the cache in log order, and only then answered. <b>Reads have two modes</b> ({@link ReadMode}).
+ * In {@code LOG} mode (the default) a GET goes through the log too, which makes it linearizable without any lease or
+ * clock reasoning at the price of a log append and fsync per read. In {@code READ_INDEX} mode a GET is answered from
+ * the leader's copy after the leader confirms with a heartbeat round that it is still the leader (see
+ * {@link RaftNode#beginRead}); that is also linearizable, and writes nothing to the log.
  *
  * <p><b>Retries are safe.</b> Each client numbers its requests. The state machine remembers, per client, the last
  * sequence number it executed and that request's result: a repeat of it returns the stored result without touching
@@ -31,9 +37,8 @@ import java.util.function.LongSupplier;
  * flight; it may or may not have been executed, so retry with the same number. {@link Kind#STALE}: an older request
  * than one already executed for this client.
  *
- * <p><b>Recovery.</b> The cache itself is not persisted: after a restart a node starts empty and re-applies the whole
- * persisted log as the leader re-confirms the commit index. The log is never compacted, so recovery time grows with
- * the log.
+ * <p><b>Recovery.</b> The cache itself is not persisted: after a restart a node starts empty, restores the latest
+ * snapshot if there is one, and re-applies the rest of the persisted log as the leader re-confirms the commit index.
  *
  * <p><b>TTLs.</b> A SET carries an absolute expiry fixed by the leader's clock when it accepts the request. Servers
  * then compare it with their own clocks, so skewed clocks can make servers disagree about whether a TTL'd key is still
@@ -44,6 +49,9 @@ import java.util.function.LongSupplier;
 public final class ReplicatedCache implements StateMachine, AutoCloseable {
 
     public enum Kind { OK, NOT_LEADER, UNKNOWN, STALE }
+
+    /** How a GET is made linearizable. Writes are not affected. */
+    public enum ReadMode { LOG, READ_INDEX }
 
     /** Known mistakes that tests can switch on to prove the linearizability checker notices them. TESTING ONLY. */
     enum Fault {
@@ -66,6 +74,8 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
 
     private record Queued(CacheCommand command, byte[] encoded, CompletableFuture<Reply> future) {}
 
+    private record ReadRequest(String key, CompletableFuture<Reply> future) {}
+
     private record Stashed(long clientId, long seq, Reply result) {}
 
     private final LRUCache<String, String> cache;
@@ -83,6 +93,8 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
     private final List<Queued> queued = new ArrayList<>();
     private RaftNode node;
     private Fault fault;
+    private ReadMode readMode = ReadMode.LOG;
+    private final Set<ReadRequest> readsInFlight = Collections.newSetFromMap(new IdentityHashMap<>());
 
     public ReplicatedCache(int capacity, int maxSessions, LongSupplier clock) {
         this(capacity, maxSessions, clock, false);
@@ -190,9 +202,36 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
         }
     }
 
+    /** Chooses how GETs are made linearizable; see {@link ReadMode}. Takes effect for the next GET. */
+    public void setReadMode(ReadMode mode) {
+        this.readMode = java.util.Objects.requireNonNull(mode);
+    }
+
+    public ReadMode readMode() {
+        return readMode;
+    }
+
     /** Connects this state machine to the Raft node that feeds it. Needed before any request is submitted. */
     public void attach(RaftNode node) {
         this.node = node;
+        node.setReadListener(new RaftNode.ReadListener() {
+            @Override
+            public void ready(Object token) {
+                ReadRequest r = (ReadRequest) token;
+                readsInFlight.remove(r);
+                // peek, not get: a read that only the leader performs must not change the recency order, or the
+                // servers would later evict different keys.
+                Optional<String> value = cache.peek(r.key());
+                r.future().complete(new Reply(Kind.OK, value.isPresent(), value.orElse(null), -1));
+            }
+
+            @Override
+            public void failed(Object token) {
+                ReadRequest r = (ReadRequest) token;
+                readsInFlight.remove(r);
+                r.future().complete(new Reply(Kind.NOT_LEADER, false, null, node.leaderId()));
+            }
+        });
     }
 
     // ------------------------------------------------------------------ client front end (leader)
@@ -218,6 +257,16 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
         if (fault == Fault.LOCAL_READS && node != null && node.role() == RaftNode.Role.LEADER) {
             Optional<String> local = cache.get(key);
             return CompletableFuture.completedFuture(new Reply(Kind.OK, local.isPresent(), local.orElse(null), -1));
+        }
+        if (readMode == ReadMode.READ_INDEX && node != null) {
+            ReadRequest request = new ReadRequest(key, new CompletableFuture<>());
+            readsInFlight.add(request);
+            RaftNode.ReadStart start = node.beginRead(request);
+            if (!start.accepted()) {
+                readsInFlight.remove(request);
+                return CompletableFuture.completedFuture(new Reply(Kind.NOT_LEADER, false, null, start.leaderHint()));
+            }
+            return request.future();
         }
         return submit(CacheCommand.get(clientId, seq, key));
     }
@@ -298,6 +347,10 @@ public final class ReplicatedCache implements StateMachine, AutoCloseable {
             p.future().complete(unknown());
         }
         pending.clear();
+        for (ReadRequest r : new ArrayList<>(readsInFlight)) {
+            r.future().complete(unknown());
+        }
+        readsInFlight.clear();
     }
 
     private static Reply unknown() {

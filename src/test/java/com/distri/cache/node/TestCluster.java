@@ -15,6 +15,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 
@@ -29,6 +30,11 @@ final class TestCluster implements AutoCloseable {
     final boolean fsync;
     final boolean checkQuorum;
     int maxBatch = ReplicatedServer.DEFAULT_MAX_BATCH; // set before start()
+    com.distri.cache.raft.ReplicatedCache.ReadMode readMode = com.distri.cache.raft.ReplicatedCache.ReadMode.LOG; // set before start()
+    javax.net.ssl.SSLContext tls;                       // set before start(); null = plain TCP
+    final Map<Integer, javax.net.ssl.SSLContext> tlsByNode = new HashMap<>(); // overrides tls for one server
+    javax.net.ssl.SSLContext clientTls;                 // used by client(); null = plain TCP
+    int snapshotChunkBytes = RaftConfig.DEFAULT_SNAPSHOT_CHUNK_BYTES; // set before start()
     int snapshotEvery;                                 // set before start(); 0 = snapshots off
 
     TestCluster(int n) throws IOException {
@@ -61,14 +67,37 @@ final class TestCluster implements AutoCloseable {
     ReplicatedServer.Config config(int i) {
         return ReplicatedServer.Config.of(i, members, root.resolve("node" + i))
                 .withSecrets(peerSecret, clientSecret)
-                .withTiming(new RaftConfig(20, 40, 4, 64, checkQuorum, Set.of(), snapshotEvery), 5)
+                .withTiming(new RaftConfig(20, 40, 4, 64, checkQuorum, Set.of(), snapshotEvery, snapshotChunkBytes), 5)
                 .withFsync(fsync);
     }
 
     void start(int i) throws IOException {
-        ReplicatedServer s = new ReplicatedServer(config(i)).setMaxBatch(maxBatch);
-        s.start();
-        servers[i] = s;
+        // The ports were picked from the operating system's ephemeral range. While a server is down, another
+        // connection of this test (a peer dialling it, a client) can be handed its port as a source port, and a restart
+        // then fails to bind for a moment. Retrying with a fresh server object is enough; real deployments use fixed ports.
+        java.net.BindException last = null;
+        for (int attempt = 0; attempt < 50; attempt++) {
+            ReplicatedServer s = new ReplicatedServer(config(i)).setMaxBatch(maxBatch).setReadMode(readMode);
+            javax.net.ssl.SSLContext serverTls = tlsByNode.getOrDefault(i, tls);
+            if (serverTls != null) {
+                s.setTls(serverTls);
+            }
+            try {
+                s.start();
+                servers[i] = s;
+                return;
+            } catch (java.net.BindException e) {
+                last = e;
+                s.close();
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+        throw last;
     }
 
     void startAll() throws IOException {
@@ -134,7 +163,7 @@ final class TestCluster implements AutoCloseable {
     }
 
     ReplicatedClient client(long operationTimeoutMillis) {
-        return new ReplicatedClient(clientAddresses(), clientSecret, operationTimeoutMillis);
+        return new ReplicatedClient(clientAddresses(), clientSecret, operationTimeoutMillis, clientTls);
     }
 
     /** A bare connection to one server's client port that has completed the handshake, for raw protocol tests. */

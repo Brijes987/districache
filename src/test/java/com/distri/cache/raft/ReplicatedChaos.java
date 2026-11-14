@@ -27,6 +27,7 @@ final class ReplicatedChaos {
         long largestBatch;
         long snapshotsTaken;
         long snapshotsInstalled;
+        long snapshotChunksReceived;
     }
 
     private static final class Client {
@@ -52,9 +53,11 @@ final class ReplicatedChaos {
     private final List<long[]> acknowledged = new ArrayList<>();
     private final Result result = new Result();
     private boolean accepting = true;
+    private final boolean readsSkipTheLog; // a read-index GET is not a log entry, so it is not "executed" anywhere
 
-    private ReplicatedChaos(ReplicatedHarness h, long seed) {
+    private ReplicatedChaos(ReplicatedHarness h, long seed, boolean readsSkipTheLog) {
         this.h = h;
+        this.readsSkipTheLog = readsSkipTheLog;
         this.random = new Random(seed * 31 + 5);
         for (int c = 1; c <= 4; c++) {
             clients.add(new Client(c));
@@ -79,15 +82,22 @@ final class ReplicatedChaos {
     /** @param batching group commit on: clients' requests queue and are written together, as the real node does */
     static Result run(long seed, int steps, Chaos.Profile faults, RaftConfig config, ReplicatedCache.Fault fault,
             Path storageDir, boolean endStateChecks, boolean batching) {
+        return run(seed, steps, faults, config, fault, storageDir, endStateChecks, batching,
+                ReplicatedCache.ReadMode.LOG);
+    }
+
+    /** @param readMode LOG: every GET goes through the log; READ_INDEX: GETs use the heartbeat-confirmed read path */
+    static Result run(long seed, int steps, Chaos.Profile faults, RaftConfig config, ReplicatedCache.Fault fault,
+            Path storageDir, boolean endStateChecks, boolean batching, ReplicatedCache.ReadMode readMode) {
         int n = seed % 2 == 0 ? 3 : 5;
-        ReplicatedHarness h = new ReplicatedHarness(n, seed, config, storageDir, batching);
+        ReplicatedHarness h = new ReplicatedHarness(n, seed, config, storageDir, batching, readMode);
         if (fault != null) {
             h.faultForAllNodes = fault;
             for (ReplicatedCache c : h.caches) {
                 c.injectFault(fault);
             }
         }
-        ReplicatedChaos run = new ReplicatedChaos(h, seed);
+        ReplicatedChaos run = new ReplicatedChaos(h, seed, readMode == ReplicatedCache.ReadMode.READ_INDEX);
         Chaos chaos = new Chaos(h.cluster, seed);
         chaos.beforeStep = run::tick;
         Chaos.Profile noRandomProposals = new Chaos.Profile(0, faults.crashRate(), faults.restartRate(),
@@ -100,6 +110,7 @@ final class ReplicatedChaos {
         run.result.largestBatch = h.largestBatch;
         run.result.snapshotsTaken = h.snapshotsTaken;
         run.result.snapshotsInstalled = h.snapshotsInstalled;
+        run.result.snapshotChunksReceived = h.snapshotChunksReceived;
         if (endStateChecks) {
             run.check();
         }
@@ -215,7 +226,9 @@ final class ReplicatedChaos {
                         case "get" -> Operation.get(c.id, c.key, reply.found(), reply.value(), c.invokedAt, now);
                         default -> Operation.delete(c.id, c.key, reply.found(), c.invokedAt, now);
                     });
-                    acknowledged.add(new long[] {c.id, c.seq});
+                    if (!(readsSkipTheLog && c.op.equals("get"))) {
+                        acknowledged.add(new long[] {c.id, c.seq});
+                    }
                     c.active = false;
                 }
                 case NOT_LEADER -> {

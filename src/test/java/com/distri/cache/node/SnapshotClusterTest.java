@@ -48,6 +48,18 @@ class SnapshotClusterTest {
                 }
                 return true;
             }, 15_000, "all servers to hold 400 entries");
+            // The counters are published by each server's own thread after its next step, so they can trail the data
+            // by a moment: wait for them instead of reading them the instant the data is visible.
+            TestCluster.await(() -> {
+                for (int i = 0; i < 3; i++) {
+                    NodeRuntime rt = cluster.servers[i].runtimeForMetrics();
+                    if (rt.snapshotsTaken() + rt.snapshotsInstalled() < 5
+                            || rt.lastLogIndex() - rt.snapshotIndex() > 25 + 5) {
+                        return false;
+                    }
+                }
+                return true;
+            }, 15_000, "every server to have taken snapshots and compacted its log");
             for (int i = 0; i < 3; i++) {
                 NodeRuntime rt = cluster.servers[i].runtimeForMetrics();
                 long inLog = rt.lastLogIndex() - rt.snapshotIndex();

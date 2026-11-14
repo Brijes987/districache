@@ -55,8 +55,16 @@ final class PeerTransport implements Transport, AutoCloseable {
     private volatile boolean closed;
     private volatile Set<Integer> blocked = Set.of();
     private ServerSocket serverSocket;
+    private final javax.net.ssl.SSLContext tls; // null: plain TCP
 
     PeerTransport(int selfId, Map<Integer, InetSocketAddress> peers, byte[] secret, Sink sink) {
+        this(selfId, peers, secret, sink, null);
+    }
+
+    /** @param tls if not null, every peer connection uses TLS, and both ends must present a trusted certificate */
+    PeerTransport(int selfId, Map<Integer, InetSocketAddress> peers, byte[] secret, Sink sink,
+            javax.net.ssl.SSLContext tls) {
+        this.tls = tls;
         this.selfId = selfId;
         this.peers = Map.copyOf(peers);
         this.secret = secret == null ? null : secret.clone();
@@ -114,8 +122,10 @@ final class PeerTransport implements Transport, AutoCloseable {
                 sockets.add(socket);
                 socket.setTcpNoDelay(true);
                 socket.setSoTimeout(HANDSHAKE_TIMEOUT_MILLIS);
-                DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
-                DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+                Socket io = tls == null ? socket
+                        : com.distri.cache.server.Tls.connectTls(tls, socket, address.getHostString(), address.getPort());
+                DataOutputStream out = new DataOutputStream(new BufferedOutputStream(io.getOutputStream()));
+                DataInputStream in = new DataInputStream(new BufferedInputStream(io.getInputStream()));
                 writeHello(out);
                 Handshake.connect(in, out, secret, ROLE, selfId);
                 socket.setSoTimeout(0);
@@ -196,8 +206,9 @@ final class PeerTransport implements Transport, AutoCloseable {
             sockets.add(socket);
             socket.setTcpNoDelay(true);
             socket.setSoTimeout(HANDSHAKE_TIMEOUT_MILLIS);
-            DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
-            DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
+            Socket io = tls == null ? socket : com.distri.cache.server.Tls.acceptTls(tls, socket, true);
+            DataInputStream in = new DataInputStream(new BufferedInputStream(io.getInputStream()));
+            DataOutputStream out = new DataOutputStream(new BufferedOutputStream(io.getOutputStream()));
             byte[] hello = Frames.read(in, 256);
             if (hello.length < 4) {
                 return;

@@ -24,6 +24,7 @@ final class ClusterLauncher implements AutoCloseable {
     private final boolean fsync;
     private final int maxBatch; // 0 = server default
     private int snapshotEvery = -1; // -1 = server default
+    private String readMode;        // null = server default
     private final int[] peerPorts;
     private final int[] clientPorts;
     private final Process[] processes;
@@ -80,6 +81,10 @@ final class ClusterLauncher implements AutoCloseable {
         this.snapshotEvery = entries;
     }
 
+    void setReadMode(String mode) {
+        this.readMode = mode;
+    }
+
     void start(int i) throws IOException, InterruptedException {
         String java = ProcessHandle.current().info().command().orElse("java");
         List<String> command = new ArrayList<>(List.of(java, "-cp", System.getProperty("java.class.path"),
@@ -92,6 +97,10 @@ final class ClusterLauncher implements AutoCloseable {
         if (snapshotEvery >= 0) {
             command.add("--snapshot-every");
             command.add(String.valueOf(snapshotEvery));
+        }
+        if (readMode != null) {
+            command.add("--read-mode");
+            command.add(readMode);
         }
         if (maxBatch > 0) {
             command.add("--max-batch");

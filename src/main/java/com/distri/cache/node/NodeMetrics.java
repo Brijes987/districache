@@ -81,8 +81,20 @@ final class NodeMetrics {
                 "Snapshots this server received from a leader and installed since start; only grows.",
                 () -> with(server, NodeRuntime::snapshotsInstalled));
         registry.gauge("districache_raft_snapshots_skipped",
-                "Times a snapshot was due but the state was too large (over 32 MiB) to take; only grows.",
+                "Times a snapshot was due but the state was too large (over 128 MiB) to take; only grows.",
                 () -> with(server, NodeRuntime::snapshotsSkipped));
+        registry.gauge("districache_raft_snapshot_chunks_sent",
+                "Snapshot chunks this server sent as leader, retransmissions included.",
+                () -> with(server, NodeRuntime::snapshotChunksSent));
+        registry.gauge("districache_raft_snapshot_chunks_received",
+                "Snapshot chunks this server accepted as the next piece of a snapshot it is receiving.",
+                () -> with(server, NodeRuntime::snapshotChunksReceived));
+        registry.gauge("districache_raft_reads_served",
+                "Read-index reads answered by this server since it started (0 unless --read-mode read-index).",
+                () -> with(server, NodeRuntime::readsServed));
+        registry.gauge("districache_raft_reads_pending",
+                "Read-index reads waiting for a heartbeat round or for the state machine to catch up.",
+                () -> with(server, NodeRuntime::pendingReads));
         registry.gauge("districache_raft_proposal_batches",
                 "Log appends made by this server as leader for client requests (each is one fsync); only grows. "
                         + "Needs group commit (--max-batch above 1), otherwise stays 0.",

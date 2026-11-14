@@ -76,4 +76,12 @@ class RaftChaosTest {
             Chaos.fullRun(seed, 2_000, Chaos.Profile.brutal(), RaftConfig.defaults().withSnapshotEvery(1));
         }
     }
+
+    @Test
+    void safetyHoldsWhenSnapshotsTravelInTinyChunksOverALossyReorderingNetwork() {
+        for (long seed = 3_200; seed < 3_240; seed++) {
+            Chaos.fullRun(seed, 3_000, seed % 2 == 0 ? Chaos.Profile.normal() : Chaos.Profile.brutal(),
+                    RaftConfig.defaults().withSnapshotEvery(8).withSnapshotChunkBytes(5));
+        }
+    }
 }

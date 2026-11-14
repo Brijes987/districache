@@ -32,6 +32,7 @@ public final class ReplicatedClient implements AutoCloseable {
 
     private final List<InetSocketAddress> servers;
     private final byte[] secret;
+    private final javax.net.ssl.SSLContext tls; // null: plain TCP
     private final long operationTimeoutMillis;
     private final long clientId;
     private long seq;
@@ -49,6 +50,16 @@ public final class ReplicatedClient implements AutoCloseable {
      * @param operationTimeoutMillis how long one operation keeps retrying before giving up
      */
     public ReplicatedClient(List<InetSocketAddress> servers, byte[] secret, long operationTimeoutMillis) {
+        this(servers, secret, operationTimeoutMillis, null);
+    }
+
+    /**
+     * @param tls if not null, connections use TLS: the server's certificate must be trusted by this context and match
+     *     the host name in the address ({@link com.distri.cache.server.Tls#clientContext})
+     */
+    public ReplicatedClient(List<InetSocketAddress> servers, byte[] secret, long operationTimeoutMillis,
+            javax.net.ssl.SSLContext tls) {
+        this.tls = tls;
         if (servers.isEmpty()) {
             throw new IllegalArgumentException("at least one server address is required");
         }
@@ -181,15 +192,18 @@ public final class ReplicatedClient implements AutoCloseable {
             s.connect(servers.get(index), 500);
             s.setTcpNoDelay(true);
             s.setSoTimeout(3_000);
-            DataInputStream newIn = new DataInputStream(new BufferedInputStream(s.getInputStream()));
-            DataOutputStream newOut = new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));
+            InetSocketAddress address = servers.get(index);
+            Socket io = tls == null ? s
+                    : com.distri.cache.server.Tls.connectTls(tls, s, address.getHostString(), address.getPort());
+            DataInputStream newIn = new DataInputStream(new BufferedInputStream(io.getInputStream()));
+            DataOutputStream newOut = new DataOutputStream(new BufferedOutputStream(io.getOutputStream()));
             byte[] role = ROLE.getBytes(StandardCharsets.UTF_8);
             newOut.writeInt(role.length + 4);
             newOut.write(role);
             newOut.writeInt(0);
             newOut.flush();
             Handshake.connect(newIn, newOut, secret, ROLE, 0);
-            socket = s;
+            socket = io;
             in = newIn;
             out = newOut;
             connectedTo = index;

@@ -45,6 +45,10 @@ final class NodeRuntime implements AutoCloseable {
     private volatile long snapshotsTaken;
     private volatile long snapshotsInstalled;
     private volatile long snapshotsSkipped;
+    private volatile long readsServed;
+    private volatile long snapshotChunksSent;
+    private volatile long snapshotChunksReceived;
+    private volatile long pendingReads;
 
     /**
      * @param maxBatch group commit: the loop runs at most this many queued tasks in a row, without waiting, and proposes the client writes among them with ONE log append (one
@@ -165,6 +169,22 @@ final class NodeRuntime implements AutoCloseable {
         return snapshotsSkipped;
     }
 
+    long snapshotChunksSent() {
+        return snapshotChunksSent;
+    }
+
+    long snapshotChunksReceived() {
+        return snapshotChunksReceived;
+    }
+
+    long readsServed() {
+        return readsServed;
+    }
+
+    long pendingReads() {
+        return pendingReads;
+    }
+
     long proposalBatches() {
         return cache.batchesProposed();
     }
@@ -236,6 +256,10 @@ final class NodeRuntime implements AutoCloseable {
         snapshotsTaken = node.snapshotsTaken();
         snapshotsInstalled = node.snapshotsInstalled();
         snapshotsSkipped = node.snapshotsSkipped();
+        readsServed = node.readsServed();
+        snapshotChunksSent = node.snapshotChunksSent();
+        snapshotChunksReceived = node.snapshotChunksReceived();
+        pendingReads = node.pendingReads();
     }
 
     @Override

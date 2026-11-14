@@ -238,6 +238,22 @@ public final class LRUCache<K, V> implements Cache<K, V>, AutoCloseable {
         }
     }
 
+    /**
+     * Reads a value without any side effect: no change to the recency order, no removal of an expired entry, no
+     * buffered-read record. An expired entry reads as absent. This is for callers that must not let a read change what
+     * a later eviction chooses, for example a replicated state machine whose copies have to evict identically.
+     */
+    public Optional<V> peek(K key) {
+        validateKey(key);
+        lock.readLock().lock();
+        try {
+            CacheEntry<K, V> node = cacheMap.get(key);
+            return node == null || node.isExpired() ? Optional.empty() : Optional.of(node.value);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
     /** Buffered-read mode: the read lock only; recency is recorded, not applied. */
     private Optional<V> getBuffered(K key) {
         CacheEntry<K, V> node;
