@@ -8,3 +8,4 @@ patch_backup/
 dependency-reduced-pom.xml
 
 benchmarks/*.txt
+gc-results/

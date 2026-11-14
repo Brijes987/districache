@@ -320,7 +320,7 @@ cluster has not been tested on separate machines or under real network faults be
 - Done: opt-in buffered reads with a before/after JMH comparison (docs/READ_BUFFER.md); not yet exposed as a server flag
 - Done: opt-in TLS for the replicated mode (docs/SECURITY.md); cost not measured
 - Done: opt-in read-index reads (`--read-mode read-index`), linearizability-checked and measured (docs/READ_INDEX.md): a large GET gain with fsync on and few clients, none shown otherwise
-- Tools written, not yet run for results: `GcPauseBenchmark` and `SnapshotPauseBenchmark` (docs/GC_PAUSES.md) and `RemoteProbe` for a run on separate machines (docs/MULTI_MACHINE.md). Both docs have empty result tables marked "not measured".
+- Done (one run, 2-CPU Windows machine): GC pauses under G1, Parallel and ZGC and snapshot-taking time by cache size (docs/GC_PAUSES.md); not repeated. Tool written but not yet run for results: `RemoteProbe` for separate machines (docs/MULTI_MACHINE.md, results table empty).
 - Not started (ideas, in the order I would do them): measuring the hit-ratio cost of buffered
   reads
 - Dropped: a separate failover monitor process (Raft elects its own leader) and data migration on membership changes
