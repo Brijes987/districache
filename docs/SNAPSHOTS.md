@@ -121,8 +121,10 @@ repeatedly; one run per row.
 - The InstallSnapshot wire format changed (chunks); servers of different builds cannot be mixed.
 - A follower only slightly behind when a snapshot is taken is sent the whole snapshot rather than the few entries it
   misses (no trailing entries are kept).
-- Taking a snapshot copies the whole state on the node's own thread, so that server is unresponsive meanwhile. Measured on
-  one machine (docs/GC_PAUSES.md): about 10 ms at 10,000 entries, 120 ms at 100,000 and 2.5 s (median; worst 33 s) at
-  1,000,000, which is already near the 128 MiB cap. The last is longer than the default election timeout (300 to 600 ms),
-  so it would probably cost the leader its leadership; that has not been tested.
+- Taking a snapshot copies the whole state on the node's own thread, so that server is unresponsive meanwhile. Measured
+  on a Windows laptop with 4.16 GB RAM (docs/GC_PAUSES.md): about 10 ms at 10,000 entries, 70 to 120 ms at 100,000 and 0.86 s
+  (median) at 500,000. At 1,000,000 entries, already near the 128 MiB cap, it took 2.5 s with a 2 GiB heap and 49 s with a
+  4 GiB heap (probably paging), while a Linux machine took about 0.5 s. From somewhere between 100,000 and 500,000 entries the
+  pause is longer than the default election timeout (300 to 600 ms), so the leader would probably lose leadership while
+  snapshotting; that has not been tested.
 - Snapshots are written for the replicated mode only; the single server has its own append-only-log compaction.

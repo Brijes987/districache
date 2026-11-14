@@ -1,6 +1,6 @@
 # Garbage-collection pauses and snapshot pauses
 
-**Status: one run of each tool, on one machine (below). Not repeated, so run-to-run variation is unknown.**
+**Status: three GC runs and three snapshot runs, on one laptop with 4.16 GB of RAM (below). The first two GC runs were probably distorted by memory shortage; the third is the most trustworthy. Treat every number as "what happened once".**
 
 ## What can pause a cache server
 1. The JVM's garbage collector, because a cache holds many small objects (a String key, a String value and a map node per
@@ -58,20 +58,59 @@ Stop-the-world pauses added up over the whole JVM life (fill, baseline and load)
 119 ms); Parallel 23 pauses, 15.2 s (median 236 ms; 22 young pauses up to 804 ms and the one 8.7 s Full GC); ZGC 58 pauses,
 4.2 ms in total.
 
-What the numbers show:
-- Parallel: the single Full GC (reason "Ergonomics") stopped everything for 8.7 s, and the application saw exactly that stall.
-- ZGC: its own pauses are tiny (at most 1.09 ms), as designed.
-- G1 and ZGC: the application nevertheless saw stalls of 2.2 s (G1) and 0.56 s (ZGC), far above the idle baseline (about
-  4 ms). For ZGC those stalls are not stop-the-world pauses. For G1 the largest logged pause is 369 ms, so most of the
-  2.2 s is not explained by the log. I did not find the cause. Likely contributors, not verified: 4 busy threads on 2 CPUs
-  competing with the collector's own threads, and the heap being small for this much data (ZGC major cycles took up to 6.2 s).
-- So on this machine, with this setup, ZGC had by far the shortest GC pauses but not the best end-to-end stalls, and the
-  setup (2 CPUs, 4 workers, 2 GiB) is not a fair test of a concurrent collector. Do not read this as a ranking of collectors.
+Second run, same machine and settings but **1 worker thread** (`scripts\gc-pause.bat 2g 2000000 1`):
 
-Not done, and needed before drawing conclusions: a repeat run (variation), a run with `--threads 1` so the collector has
-a CPU (`scripts\gc-pause.bat 2g 2000000 1`), a larger heap, and a machine with more cores.
+| Collector | p99 request ms | max request ms | stall p99 under load ms | max stall under load ms | idle-baseline max stall ms | longest stop-the-world pause in the JVM log ms |
+|---|---|---|---|---|---|---|
+| G1 | 0.01 | 410 | 51 | 574 | 6.3 | 465 (Young, Normal) |
+| Parallel | 0.01 | 1070 | 8.4 | 1934 | 6.5 | 1782 (Young) |
+| ZGC | 0.03 | 1498 | 38 | 1611 | 16.8 | 1.57 |
 
-## Snapshot pause (`SnapshotPauseBenchmark`, same machine, `-Xmx2g`)
+Stop-the-world pauses added up over the JVM life: G1 29 pauses, 4.9 s (median 124 ms); Parallel 13 pauses, 8.2 s (median 392 ms);
+ZGC 44 pauses, 7.2 ms in total.
+
+What the two runs show:
+- ZGC's own stop-the-world pauses were tiny both times (at most 1.09 and 1.57 ms), as designed.
+- G1's longest logged pause was 369 ms and 465 ms; its young-generation pauses had a median of about 120 ms in both runs.
+- Parallel is the least consistent: the first run had one 8.7 s Full GC, the second had none but young pauses up to 1.8 s. One run
+  cannot say which is typical.
+- For every collector the application saw stalls of 0.4 to 8.7 s, far above the idle baseline (4 to 17 ms). For ZGC those stalls
+  are not stop-the-world pauses, and for G1 most of them are not explained by the logged pauses. **I do not know the cause.**
+  My first guess (4 workers competing with the collector on 2 CPUs) is weakened: with 1 worker ZGC still stalled 1.6 s. What
+  remains is untested: a heap too small for this much live data (ZGC major cycles took up to 16 s), or the machine itself
+  (the baseline max stall was 16.8 ms in the second ZGC run, so it is noisy). Look for "Allocation Stall" in `gc-ZGC.log`.
+- So these runs do not rank the collectors, and they do not show that any of them is good for this cache on this machine.
+
+Third run: **500,000 entries, 1 GiB heap, 1 worker thread** (`scripts\gc-pause.bat 1g 500000 1`), chosen because the laptop has
+only 4.16 GB of physical RAM (`wmic computersystem get TotalPhysicalMemory` = 4,157,419,520 bytes) and a 2 GiB heap with 2M entries
+plus Windows and other programs may not have fitted:
+
+| Collector | p99 request ms | max request ms | stall p99 under load ms | max stall under load ms | idle-baseline max stall ms | longest stop-the-world pause in the JVM log ms |
+|---|---|---|---|---|---|---|
+| G1 | 0.01 | 397 | 32 | 391 | 21.8 | 153 (Young, Normal) |
+| Parallel | 0.01 | 482 | 2.1 | 482 | 5.1 | 481 (one Full GC) |
+| ZGC | 0.01 | 267 | 9.2 | 318 | 31.9 | 0.06 |
+
+Pauses added up over the JVM life: G1 38 pauses, 2.9 s (median 86 ms); Parallel 42 pauses, 3.7 s (median 73 ms); ZGC 59 pauses, 1.5 ms.
+
+What the three runs show:
+- The multi-second stalls of the first two runs (up to 8.7 s) are gone: the worst stall of any collector is now 0.48 s. That fits the
+  explanation that the first two runs were short of physical memory. It is not proof: two things changed at once (heap 2 GiB to 1 GiB, and
+  2,000,000 to 500,000 entries), so which one mattered is not known.
+- In this run, each collector's worst stall is close to its worst logged pause: Parallel 482 ms vs a 481 ms Full GC, G1 391 ms vs 153 ms
+  (not fully explained), ZGC 318 ms vs 0.06 ms (not explained: ZGC's pauses are not the cause).
+- ZGC's stop-the-world pauses were at most 1.57 ms in all three runs. The remaining ZGC stalls of a few hundred milliseconds are
+  unexplained. The idle baseline on this machine itself reached 32 ms in this run, so it is noisy.
+- G1's young pauses had a median of 86 to 124 ms in all three runs, and its longest pause was 153 to 465 ms.
+- Parallel's single Full GC cost 0.48 s here and 8.7 s in the first run; the first run's heap was far larger and probably paging.
+- These runs do not rank the collectors. One laptop, one workload, no repeats of the third run.
+
+Not done: repeating the third run, a machine with more RAM and cores, and larger data sets on such a machine (the question this page
+set out to answer for a big cache is still open).
+
+## Snapshot pause (`SnapshotPauseBenchmark`)
+
+Same machine (2 CPUs, Windows 10, Java 23), `-Xmx2g`, five timed runs per size (two warm-up runs dropped), so "worst" is the worst of five:
 
 | Entries | snapshot MiB | snapshot() median ms | snapshot() worst ms | restore() median ms | restore() worst ms |
 |---|---|---|---|---|---|
@@ -79,12 +118,22 @@ a CPU (`scripts\gc-pause.bat 2g 2000000 1`), a larger heap, and a machine with m
 | 100,000 | 12.4 | 119.8 | 161.3 | 91.7 | 433.0 |
 | 1,000,000 | 125.7 | 2,473 | 32,891 | 2,119 | 7,029 |
 
-- Five timed runs per size (two warm-up runs dropped), so "worst" is the worst of five.
+The same 1,000,000 entries with `-Xmx4g` on that machine: snapshot() median **48,886 ms**, worst 228,723; restore() median 28,506,
+worst 214,176. Larger heap, 20 times slower. The machine has 4.16 GB of RAM, so a 4 GiB heap leaves almost nothing for Windows;
+paging is the likely cause, though I did not watch memory use.
+
+With a smaller heap (`-Xmx1g`, third run): 100,000 entries: snapshot() median 71 ms (worst 598), restore() median 78 ms (worst 177);
+500,000 entries (62.8 MiB): snapshot() median **863 ms** (worst 962), restore() median 313 ms (worst 580). The 500,000-entry time is
+about 12 times the 100,000-entry time for 5 times the data, so cost is not proportional to size on this laptop.
+
+Cross-check, run by me, a different machine (Linux, 2 CPUs, 8 GB, Java 21): 1,000,000 entries took a snapshot() median of 581 ms
+at `-Xmx2g` and 513 ms at `-Xmx4g` (worst 628 and 766 ms), restore() about 550 and 515 ms, and 500,000 entries about 260 ms. There
+the cost grew roughly in proportion to size and did not depend on the heap size, so the code itself shows no sign of the
+blow-up; it points at the Windows machine's memory. From the Windows machine I would trust the 10,000, 100,000 and (1 GiB heap) 500,000 rows, not the 1,000,000 row.
+
 - 1,000,000 entries of 100 bytes is already 125.7 MiB: just under the 128 MiB snapshot cap, so about a million such entries is the
   most that can be snapshotted at all.
-- The 32.9 s worst case at 1,000,000 entries is far from its 2.5 s median. With a 2 GiB heap the copy needs much of the
-  heap, so garbage collection probably dominates, but I did not check. Rerun with `-Xmx4g` to see whether it goes away.
-- What it means for Raft (follows from the design, not tested): the node's thread does the copy, so it sends no heartbeats
-  meanwhile. With the defaults an election timeout is 300 to 600 ms. At 100,000 entries the pause (about 0.12 to 0.16 s) is
-  below that; at 1,000,000 entries (2.5 s median) it is far above it, so followers would start an election while the
-  leader is taking a snapshot. This has not been run.
+- What it means for Raft (follows from the design, not tested): the node's thread does the copy, so it sends no heartbeats meanwhile.
+  With the defaults an election timeout is 300 to 600 ms. At 100,000 entries the pause (about 0.07 to 0.16 s here) is below that.
+  At 500,000 entries (0.86 s here) and at 1,000,000 entries (0.5 s on the Linux machine, more on the laptop) it is above it, so
+  followers would probably start an election while the leader takes a snapshot. This has not been run.
