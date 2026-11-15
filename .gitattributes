@@ -1,2 +1,2 @@
-*.java linguist-language=Java
+*.java linguist-language=Java linguist-vendored=false linguist-generated=false
 scripts/* linguist-vendored
