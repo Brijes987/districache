@@ -147,18 +147,36 @@ class BackgroundSnapshotTest {
     }
 
     @Test
-    void onlyOneSnapshotIsPreparedAtATimeAndTheNextOneStartsAfterwards() {
+    void onlyOneSnapshotIsPreparedAtATimeAndTheNextOneStartsWhenTheFirstFinishes() {
         Rig rig = Rig.leader(3);
         rig.commit("a", "b");
         rig.commit("c", "d", "e"); // several applies were "due" while one was running
         assertEquals(1, rig.worker.submitted);
-        rig.worker.finishOldest();
-        rig.commit("f");           // apply 7: 7 - 3 >= 3
+        rig.worker.finishOldest(); // installs index 3; 6 - 3 >= 3, so the next one (index 6) starts at once
         assertEquals(2, rig.worker.submitted);
+        assertTrue(rig.node.snapshotInFlight());
+        rig.commit("f");           // applied 7 while it runs: not due again (7 - 3 >= 3 but one is in flight)
+        assertEquals(2, rig.worker.submitted);
+        rig.worker.finishOldest();
+        assertEquals(6, rig.node.snapshotIndex());
+        assertEquals("2:a,3:b,4:c,5:d,6:e", new String(rig.storage.snapshot().state()));
+        assertFalse(rig.node.snapshotInFlight(), "7 - 6 < 3: nothing is due, nothing starts");
+    }
+
+    @Test
+    void aSnapshotThatIsStillDueWhenOneFinishesStartsRightAwayWithoutWaitingForAnotherWrite() {
+        // Writes stop while a snapshot is being prepared: nothing else will ever be applied, so the finish itself
+        // must start the next one, or the log stays longer than snapshotEvery for as long as the cluster is idle.
+        Rig rig = Rig.leader(3);
+        rig.commit("a", "b");                 // applied 3: snapshot due, prepared in the background
+        rig.commit("c", "d", "e", "f");       // applied 7 while it runs; each was due, none could start
+        assertEquals(1, rig.worker.submitted);
+        rig.worker.finishOldest();            // installs index 3; 7 - 3 >= 3 is still due
+        assertEquals(2, rig.worker.submitted, "the next snapshot starts at once");
         assertTrue(rig.node.snapshotInFlight());
         rig.worker.finishOldest();
         assertEquals(7, rig.node.snapshotIndex());
-        assertEquals("2:a,3:b,4:c,5:d,6:e,7:f", new String(rig.storage.snapshot().state()));
+        assertEquals(0, rig.storage.lastIndex() - rig.node.snapshotIndex());
     }
 
     @Test

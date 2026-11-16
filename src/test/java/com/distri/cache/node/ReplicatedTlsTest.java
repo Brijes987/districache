@@ -131,6 +131,12 @@ class ReplicatedTlsTest {
                     refused = true;
                 } catch (java.net.SocketTimeoutException e) {
                     refused = false; // the server accepted the connection and is waiting for the peer hello
+                } catch (java.net.SocketException e) {
+                    // The server ended the connection and the operating system reported a reset or abort instead of the
+                    // TLS alert (Windows does this when the close beats the alert to the client: "An established
+                    // connection was aborted by the software in your host machine"). That is still a refusal. Only
+                    // silence (the timeout above) is not.
+                    refused = true;
                 }
                 assertTrue(refused, "a connection without a certificate must not be accepted on the peer port");
             }

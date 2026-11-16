@@ -31,7 +31,16 @@ longer than the election timeout made the followers elect a new leader (`Snapsho
 3. The result is posted back as an ordinary task on the Raft thread, which commits it: if no newer snapshot was installed
    meanwhile (a leader may have sent one), the file is renamed into place and the log is trimmed, keeping the entries applied
    in the meantime. Otherwise the result is thrown away.
-- Only one snapshot is prepared at a time; the next one starts after it finishes, if still due.
+- Only one snapshot is prepared at a time. When one finishes and another is already due (writes arrived while it ran),
+  the next starts at once. The first version started the next one only at the next write, so a cluster whose writes
+  stopped while a snapshot was running kept a log longer than `--snapshot-every` until the next write; a test on a
+  slower machine (`SnapshotClusterTest`, which waits for the idle state) timed out waiting for it. Found by that failure,
+  shown by a unit test, fixed; whether it fully explains the timeout on that machine is not proven, because it did not
+  reproduce in a real cluster in my environment.
+- Stopping a server waits (up to 3 s) for the snapshot worker, and a stray temporary file that cannot be deleted at start
+  (Windows will not delete a file another handle holds open) is left in place instead of stopping the server: temporary
+  names are unique. This came from a failure on Windows (`AccessDeniedException` on restart, `SnapshotClusterTest`);
+  Linux does not have the problem, so it cannot be reproduced there and the fix has been run on Windows only by the user.
 - A crash while one is being prepared loses nothing: the stray file is deleted at the next start and the old snapshot and the
   whole log are still there.
 - A failure in the background (disk full, say) stops the server, as a failed write on the Raft thread did.
@@ -106,13 +115,13 @@ longer than the election timeout made the followers elect a new leader (`Snapsho
   was down while the log was compacted is caught up by a snapshot; the whole group restarts from its snapshots.
 - Two deliberately broken versions (installing a stale snapshot; snapshotting before applying the last entry) are caught
   by the chaos tests, and 13 hand-made code mutations were each caught by at least one test.
-- Background snapshots: `BackgroundSnapshotTest` (8; a manual worker decides when the work runs and when its result arrives:
+- Background snapshots: `BackgroundSnapshotTest` (9; a manual worker decides when the work runs and when its result arrives:
   nothing installed until delivered, the state is the one at the freeze and not at the finish, one at a time, an installed
   newer snapshot makes it obsolete, failure, too large, restart), `BackgroundSnapshotStorageTest` (7; real files: preparing
   changes nothing, a crash leaves no trace, commit keeps later entries and survives a restart, stale refused, preparing on
   another thread beside 250 appends), a capture test in `SnapshotCacheTest`, and chaos runs with the worker finishing after a
   random 0 to 25-40 simulated steps (Raft safety, replica agreement and exactly-once, linearizability, also with tiny chunks).
-  15 hand-made breakages were each caught; two (reading the cache or the sessions only when the background runs) were caught at
+  16 hand-made breakages were each caught; two (reading the cache or the sessions only when the background runs) were caught at
   first only by one chaos test or not at all, because replaying idempotent commands hides them, so a direct test was added.
 
 ## Measuring

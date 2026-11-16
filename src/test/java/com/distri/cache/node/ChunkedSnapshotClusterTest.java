@@ -19,6 +19,24 @@ class ChunkedSnapshotClusterTest {
         return sb.toString();
     }
 
+    /**
+     * True if {@code actual} is exactly {@code value(i, size)}, compared character by character. The polling below runs
+     * every few milliseconds over every key: building each expected value again (100 KB each, 42 MB per poll) made the
+     * test produce gigabytes of garbage a second, which on a small heap is what ran it out of memory.
+     */
+    private static boolean isValue(String actual, int i, int size) {
+        if (actual == null || actual.length() != size) {
+            return false;
+        }
+        String seed = "v" + i + "-";
+        for (int p = 0; p < size; p++) {
+            if (actual.charAt(p) != seed.charAt(p % seed.length())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static boolean holds(TestCluster cluster, int server, int count, int size) {
         try {
             var contents = cluster.servers[server].localContents();
@@ -26,7 +44,7 @@ class ChunkedSnapshotClusterTest {
                 return false;
             }
             for (int i = 0; i < count; i++) {
-                if (!value(i, size).equals(contents.get("key" + i))) {
+                if (!isValue(contents.get("key" + i), i, size)) {
                     return false;
                 }
             }

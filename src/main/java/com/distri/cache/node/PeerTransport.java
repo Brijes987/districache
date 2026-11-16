@@ -41,6 +41,12 @@ final class PeerTransport implements Transport, AutoCloseable {
 
     private static final String ROLE = "raft-peer";
     private static final int QUEUE_CAPACITY = 4_096;
+    /**
+     * Most bytes allowed to wait for one peer. The queue is also limited by message count, but a message can be several
+     * megabytes (a batch of large values), so a count limit alone let a dead peer pin gigabytes. One message larger
+     * than this is still accepted when nothing else is waiting; the limit can be exceeded by at most one message.
+     */
+    static final long MAX_QUEUED_BYTES = 16L * 1024 * 1024;
     private static final int CONNECT_TIMEOUT_MILLIS = 500;
     private static final int HANDSHAKE_TIMEOUT_MILLIS = 3_000;
 
@@ -49,6 +55,7 @@ final class PeerTransport implements Transport, AutoCloseable {
     private final byte[] secret;
     private final Sink sink;
     private final Map<Integer, BlockingQueue<byte[]>> queues = new ConcurrentHashMap<>();
+    private final Map<Integer, AtomicLong> queuedBytes = new ConcurrentHashMap<>();
     private final Set<Socket> sockets = ConcurrentHashMap.newKeySet();
     private final Semaphore inboundSlots;
     private final AtomicLong dropped = new AtomicLong();
@@ -72,6 +79,7 @@ final class PeerTransport implements Transport, AutoCloseable {
         this.inboundSlots = new Semaphore(Math.max(4, peers.size() * 4));
         for (int peer : peers.keySet()) {
             queues.put(peer, new ArrayBlockingQueue<>(QUEUE_CAPACITY));
+            queuedBytes.put(peer, new AtomicLong());
         }
     }
 
@@ -87,6 +95,12 @@ final class PeerTransport implements Transport, AutoCloseable {
 
     int port() {
         return serverSocket.getLocalPort();
+    }
+
+    /** Bytes waiting to be sent to a peer. For diagnostics and tests. */
+    long queuedBytes(int peer) {
+        AtomicLong bytes = queuedBytes.get(peer);
+        return bytes == null ? 0 : Math.max(0, bytes.get());
     }
 
     /** Messages dropped because a peer's queue was full. For diagnostics. */
@@ -105,7 +119,15 @@ final class PeerTransport implements Transport, AutoCloseable {
         if (queue == null || closed || blocked.contains(to)) {
             return;
         }
-        if (!queue.offer(RaftMessageCodec.encode(message))) {
+        AtomicLong waiting = queuedBytes.get(to);
+        if (waiting.get() >= MAX_QUEUED_BYTES) {
+            dropped.incrementAndGet(); // checked before encoding: a peer that is down costs no encoding work either
+            return;
+        }
+        byte[] frame = RaftMessageCodec.encode(message);
+        waiting.addAndGet(frame.length); // counted before it is queued, so the sender thread never sees it uncounted
+        if (!queue.offer(frame)) {
+            waiting.addAndGet(-frame.length);
             dropped.incrementAndGet();
         }
     }
@@ -114,6 +136,7 @@ final class PeerTransport implements Transport, AutoCloseable {
 
     private void sendLoop(int peer, InetSocketAddress address) {
         BlockingQueue<byte[]> queue = queues.get(peer);
+        AtomicLong waiting = queuedBytes.get(peer);
         long backoff = 50;
         while (!closed) {
             Socket socket = new Socket();
@@ -129,14 +152,18 @@ final class PeerTransport implements Transport, AutoCloseable {
                 writeHello(out);
                 Handshake.connect(in, out, secret, ROLE, selfId);
                 socket.setSoTimeout(0);
-                queue.clear(); // anything queued while the link was down is stale
+                for (byte[] stale = queue.poll(); stale != null; stale = queue.poll()) {
+                    waiting.addAndGet(-stale.length); // anything queued while the link was down is stale
+                }
                 backoff = 50;
                 while (!closed) {
                     byte[] frame = queue.poll(200, TimeUnit.MILLISECONDS);
                     if (frame != null) {
+                        waiting.addAndGet(-frame.length);
                         Frames.write(out, frame);
                         // drain what is already waiting so a burst goes out in one flush
                         while ((frame = queue.poll()) != null) {
+                            waiting.addAndGet(-frame.length);
                             Frames.write(out, frame);
                         }
                         out.flush();

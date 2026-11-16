@@ -9,7 +9,7 @@ a fourth place to run the client. The client can run on one of the three if you 
 results, because then it shares that machine.
 
 ## What you need
-- Three machines that can reach each other by IP, each with Java 17+ and this project built (`mvn -q package -DskipTests`
+- Three machines that can reach each other by IP, each with Java 21+ and this project built (`mvn -q package -DskipTests`
   gives `target/classes`; copy the folder or build on each).
 - Two TCP ports per server open between the machines: a *peer* port (servers talk to each other) and a *client* port.
   Example: 7001 and 7101. Open them in the firewall (Windows: `netsh advfirewall firewall add rule name=districache dir=in action=allow protocol=TCP localport=7001,7101`).

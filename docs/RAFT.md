@@ -135,7 +135,7 @@ checker supports them and its own tests cover them.
   unexpected error (a broken Raft invariant, a disk error) the server **stops itself** instead of carrying on with
   possibly inconsistent state.
 - Server to server: one outgoing connection per peer, written by its own thread, so a slow or dead peer cannot delay the
-  others. Sending never blocks; a full queue drops the message, which Raft tolerates. Peers prove they know a shared
+  others. Sending never blocks; a full queue drops the message, which Raft tolerates. The queue is limited by bytes (16 MiB per peer, checked before the message is encoded) as well as by count (4,096): it used to be limited by count alone, and a message can be several megabytes, so a leader with a dead follower queued one per heartbeat and per client write without a practical limit. Found through an `OutOfMemoryError` in `ChunkedSnapshotClusterTest` on a 4 GB laptop; `PeerTransportBackpressureTest` showed 120 MB queued for a dead peer before the change and at most about 16 MiB plus one message after. The same test needed about 500 MB of heap before and about 380 MB after (my machine; one run each, the rest is the 42 MB state held several times). Peers prove they know a shared
   secret with an HMAC challenge-response. Without a secret anyone who can reach the peer port can inject Raft messages.
 - `ReplicatedClient`: finds the leader, follows `NOT_LEADER` redirects, and retries with the **same** request number
   after a lost reply, a crashed leader or a timeout, so each operation takes effect at most once. If its deadline passes

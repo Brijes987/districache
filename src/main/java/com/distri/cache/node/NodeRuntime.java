@@ -294,6 +294,9 @@ final class NodeRuntime implements AutoCloseable {
         thread.interrupt();
         try {
             thread.join(3_000);
+            // The snapshot worker may be in the middle of writing a file. Wait for it, so that a restart in this
+            // directory does not meet a file it still holds open (Windows cannot delete such a file).
+            snapshotThread.awaitTermination(3, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }

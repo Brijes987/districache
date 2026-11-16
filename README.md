@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Brijes987/districache/actions/workflows/ci.yml/badge.svg)](https://github.com/Brijes987/districache/actions/workflows/ci.yml)
 
-A distributed in-memory cache in Java 17, built from first principles with no runtime dependencies. It started as a
+A distributed in-memory cache in Java 21, built from first principles with no runtime dependencies. It started as a
 thread-safe LRU cache with per-entry TTL (a hash map plus a **hand-written doubly-linked list**, guarded by a
 `ReentrantReadWriteLock`) and grew in layers:
 
@@ -47,7 +47,7 @@ flowchart LR
 ```
 
 ## Quick start
-Requires Java 17+ and Maven.
+Requires Java 21+ and Maven.
 ```bash
 mvn clean test                                    # the full test suite
 mvn compile
@@ -316,6 +316,10 @@ cluster has not been tested on separate machines or under real network faults be
 - Done: Prometheus metrics for both server modes
 - Done: group commit for the Raft log, measured before and after (docs/GROUP_COMMIT.md)
 - Done: snapshots and log compaction with InstallSnapshot for lagging servers, measured (docs/SNAPSHOTS.md)
+- Written, not yet run: a three-server cluster with Prometheus and Grafana in Docker Compose (docs/DOCKER.md); the files parse and the metric names exist, but no container has been started from them.
+- Written, not yet run: JCStress concurrency tests for the cache classes (docs/JCSTRESS.md); their expected outcomes were checked against every sequential order, but JCStress itself has not run.
+- Done: project moved to Java 21 (the full suite passed on JDK 21 in my environment; the CI workflow still has to be switched to 21)
+- Done: the outgoing queue to each peer is limited by bytes as well as by message count (a dead follower used to make the leader queue without a practical limit; docs/RAFT.md)
 - Done: snapshots encoded and written off the Raft thread (leadership kept during an 800 ms snapshot in a test; freeze time of 1,000,000 entries 78 ms on one Linux machine)
 - Done: chunked snapshot transfer (1 MiB chunks, acknowledged one at a time; tested including a 42 MB state, above the old 32 MiB limit)
 - Done: opt-in buffered reads with a before/after JMH comparison (docs/READ_BUFFER.md); not yet exposed as a server flag

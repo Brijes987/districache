@@ -59,7 +59,8 @@ class SnapshotClusterTest {
                     }
                 }
                 return true;
-            }, 15_000, "every server to have taken snapshots and compacted its log");
+            }, 15_000, () -> "every server to have taken snapshots and compacted its log; state: "
+                    + describeSnapshots(cluster));
             for (int i = 0; i < 3; i++) {
                 NodeRuntime rt = cluster.servers[i].runtimeForMetrics();
                 long inLog = rt.lastLogIndex() - rt.snapshotIndex();
@@ -168,5 +169,21 @@ class SnapshotClusterTest {
                 assertEquals(Optional.of("v39"), client.get("counter-key"));
             }
         }
+    }
+
+    /** One line per server, so a timeout says what each one was doing instead of only that it timed out. */
+    private static String describeSnapshots(TestCluster cluster) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < 3; i++) {
+            NodeRuntime rt = cluster.servers[i].runtimeForMetrics();
+            out.append("[server ").append(i).append(": taken=").append(rt.snapshotsTaken())
+                    .append(" installed=").append(rt.snapshotsInstalled())
+                    .append(" skipped=").append(rt.snapshotsSkipped())
+                    .append(" snapshotIndex=").append(rt.snapshotIndex())
+                    .append(" lastApplied=").append(rt.lastApplied())
+                    .append(" lastLogIndex=").append(rt.lastLogIndex())
+                    .append(" failed=").append(rt.failed()).append("] ");
+        }
+        return out.toString();
     }
 }

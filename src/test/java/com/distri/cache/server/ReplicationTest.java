@@ -295,6 +295,7 @@ class ReplicationTest {
                             } else {
                                 c.call("SET", key, "t" + id + "-" + (i++));
                             }
+                            Thread.sleep(1); // still four busy writers, but they leave the CPU to the sync on a 2-CPU laptop
                         }
                     }
                     return null;

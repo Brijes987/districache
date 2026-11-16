@@ -1,0 +1,81 @@
+# A three-server Raft group, plus Prometheus and Grafana. Development and demonstration only:
+# the secrets in docker/secrets are examples, traffic is not encrypted (see docs/SECURITY.md for TLS), and the metrics
+# endpoints have no authentication.
+#
+#   docker compose up --build            start everything
+#   docker compose run --rm probe        write a key and read it back through the group
+#   Prometheus http://localhost:9090     Grafana http://localhost:3000 (user admin, password admin)
+
+x-node: &node
+  build: .
+  restart: unless-stopped
+  secrets: [peer_secret, client_secret]
+  networks: [cluster]
+
+x-members: &members "1=n1:7001:6381,2=n2:7001:6381,3=n3:7001:6381"
+
+services:
+  n1:
+    <<: *node
+    command: ["com.distri.cache.node.ReplicatedServerMain", "--id", "1", "--members", *members, "--data", "/data",
+              "--peer-secret-file", "/run/secrets/peer_secret", "--client-secret-file", "/run/secrets/client_secret",
+              "--read-mode", "read-index", "--metrics-port", "9100", "--metrics-host", "0.0.0.0"]
+    volumes: ["n1-data:/data"]
+    ports: ["9101:9100"]
+
+  n2:
+    <<: *node
+    command: ["com.distri.cache.node.ReplicatedServerMain", "--id", "2", "--members", *members, "--data", "/data",
+              "--peer-secret-file", "/run/secrets/peer_secret", "--client-secret-file", "/run/secrets/client_secret",
+              "--read-mode", "read-index", "--metrics-port", "9100", "--metrics-host", "0.0.0.0"]
+    volumes: ["n2-data:/data"]
+    ports: ["9102:9100"]
+
+  n3:
+    <<: *node
+    command: ["com.distri.cache.node.ReplicatedServerMain", "--id", "3", "--members", *members, "--data", "/data",
+              "--peer-secret-file", "/run/secrets/peer_secret", "--client-secret-file", "/run/secrets/client_secret",
+              "--read-mode", "read-index", "--metrics-port", "9100", "--metrics-host", "0.0.0.0"]
+    volumes: ["n3-data:/data"]
+    ports: ["9103:9100"]
+
+  # A client inside the same network (a leader's address is only reachable from there). Not started by `up`.
+  probe:
+    build: .
+    profiles: ["tools"]
+    secrets: [client_secret]
+    networks: [cluster]
+    depends_on: [n1, n2, n3]
+    command: ["com.distri.cache.node.RemoteProbe", "smoke", "--servers", "n1:6381,n2:6381,n3:6381",
+              "--client-secret-file", "/run/secrets/client_secret"]
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes: ["./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+    networks: [cluster]
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
+    networks: [cluster]
+
+networks:
+  cluster: {}
+
+volumes:
+  n1-data: {}
+  n2-data: {}
+  n3-data: {}
+
+secrets:
+  peer_secret:
+    file: ./docker/secrets/peer.secret
+  client_secret:
+    file: ./docker/secrets/client.secret

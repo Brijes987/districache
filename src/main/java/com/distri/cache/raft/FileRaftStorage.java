@@ -84,7 +84,13 @@ public final class FileRaftStorage implements RaftStorage, AutoCloseable {
         Files.deleteIfExists(dir.resolve("raft.log.tmp"));
         try (java.nio.file.DirectoryStream<Path> leftovers = Files.newDirectoryStream(dir, "raft.snapshot.bg.*.tmp")) {
             for (Path leftover : leftovers) { // a background snapshot that was never committed
-                Files.deleteIfExists(leftover);
+                try {
+                    Files.deleteIfExists(leftover);
+                } catch (IOException e) {
+                    // Windows refuses to delete a file another handle still has open (a worker of the previous run
+                    // that is still stopping, or a virus scanner). It is only a stray file: names are unique, so
+                    // leaving it does no harm, and it is deleted at a later start.
+                }
             }
         }
         this.logFile = dir.resolve("raft.log");
@@ -462,7 +468,8 @@ public final class FileRaftStorage implements RaftStorage, AutoCloseable {
         ByteBuffer buf = ByteBuffer.allocate(28 + state.length);
         buf.putInt(SNAPSHOT_MAGIC).putLong(index).putLong(term).putInt(state.length).put(state);
         buf.putInt(crc32(buf.array(), 0, 24 + state.length));
-        Path tmp = dir.resolve("raft.snapshot.bg." + index + "." + preparedCounter.incrementAndGet() + ".tmp");
+        Path tmp = dir.resolve("raft.snapshot.bg." + index + "." + Long.toHexString(System.nanoTime()) + "."
+                + preparedCounter.incrementAndGet() + ".tmp"); // unique across restarts, so a stray file never collides
         try (FileChannel ch = FileChannel.open(tmp, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
             ByteBuffer out = ByteBuffer.wrap(buf.array());
             while (out.hasRemaining()) {

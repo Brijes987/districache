@@ -814,8 +814,7 @@ public final class RaftNode {
         while (lastApplied < commitIndex) {
             lastApplied++;
             LogEntry entry = storage.entry(lastApplied);
-            boolean snapshotDue = config.snapshotEvery() > 0
-                    && lastApplied - storage.snapshotIndex() >= config.snapshotEvery();
+            boolean snapshotDue = snapshotDue();
             byte[] early = snapshotDue && config.faults().contains(RaftConfig.Fault.SNAPSHOT_BEFORE_APPLY)
                     ? snapshotState() : null;
             if (!entry.isNoop()) {
@@ -826,6 +825,10 @@ public final class RaftNode {
             }
         }
         serveReads();
+    }
+
+    private boolean snapshotDue() {
+        return config.snapshotEvery() > 0 && lastApplied - storage.snapshotIndex() >= config.snapshotEvery();
     }
 
     private byte[] snapshotState() {
@@ -855,7 +858,7 @@ public final class RaftNode {
      */
     private void takeSnapshotInBackground() {
         if (snapshotInFlight) {
-            return; // one at a time; the next apply after it finishes starts another if one is still due
+            return; // one at a time; snapshotFinished starts another if one is still due by then
         }
         long index = lastApplied;
         long term = storage.termAt(index);
@@ -887,6 +890,13 @@ public final class RaftNode {
         // A snapshot at or after this one may have been installed from a leader meanwhile; then this one is simply old.
         if (storage.commitSnapshot(outcome.prepared())) {
             snapshotsTaken++;
+        }
+        // Writes that were applied while this one ran were each "due" but could not start. If nothing more is applied
+        // (the cluster went idle) no later apply would start the next one, and the log would stay longer than
+        // snapshotEvery until the next write. Not after a too-large result: that returns above, so an oversized state
+        // does not resubmit itself in a loop.
+        if (snapshotDue()) {
+            takeSnapshotInBackground();
         }
     }
 

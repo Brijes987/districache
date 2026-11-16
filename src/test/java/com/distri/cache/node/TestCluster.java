@@ -143,6 +143,19 @@ final class TestCluster implements AutoCloseable {
         throw new AssertionError("no leader within " + timeoutMillis + " ms");
     }
 
+    /** Like {@link #await(BooleanSupplier, long, String)}, but the description is built when the wait times out. */
+    static void await(BooleanSupplier condition, long timeoutMillis, java.util.function.Supplier<String> what)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + timeoutMillis * 1_000_000;
+        while (System.nanoTime() < deadline) {
+            if (condition.getAsBoolean()) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        throw new AssertionError("timed out waiting for " + what.get());
+    }
+
     static void await(BooleanSupplier condition, long timeoutMillis, String what) throws InterruptedException {
         long deadline = System.nanoTime() + timeoutMillis * 1_000_000;
         while (System.nanoTime() < deadline) {
