@@ -257,6 +257,9 @@ public final class CacheServer implements AutoCloseable {
             socket.getOutputStream().write(
                     "-ERR max number of clients reached\r\n".getBytes(StandardCharsets.US_ASCII));
             socket.getOutputStream().flush();
+            // Send FIN after the reply instead of closing abruptly: on Windows an immediate close can become a
+            // connection reset that discards the reply before the client has read it.
+            socket.shutdownOutput();
         } catch (IOException ignored) {
             // the client is gone; nothing to do
         }

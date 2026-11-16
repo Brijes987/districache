@@ -58,10 +58,22 @@ final class TestCluster implements AutoCloseable {
         }
     }
 
+    /** Every port handed out in this JVM, so the same number is never given to two servers (or two tests) twice. */
+    private static final Set<Integer> ISSUED_PORTS = new java.util.HashSet<>();
+
     private static int freePort() throws IOException {
-        try (ServerSocket s = new ServerSocket(0)) {
-            return s.getLocalPort();
+        for (int attempt = 0; attempt < 100; attempt++) {
+            int port;
+            try (ServerSocket s = new ServerSocket(0)) {
+                port = s.getLocalPort();
+            }
+            synchronized (ISSUED_PORTS) {
+                if (ISSUED_PORTS.add(port)) {
+                    return port;
+                }
+            }
         }
+        throw new IOException("could not find an unused port");
     }
 
     ReplicatedServer.Config config(int i) {
