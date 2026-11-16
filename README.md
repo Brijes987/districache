@@ -317,7 +317,7 @@ cluster has not been tested on separate machines or under real network faults be
 - Done: group commit for the Raft log, measured before and after (docs/GROUP_COMMIT.md)
 - Done: snapshots and log compaction with InstallSnapshot for lagging servers, measured (docs/SNAPSHOTS.md)
 - Written, not yet run: a three-server cluster with Prometheus and Grafana in Docker Compose (docs/DOCKER.md); the files parse and the metric names exist, but no container has been started from them.
-- Written, not yet run: JCStress concurrency tests for the cache classes (docs/JCSTRESS.md); their expected outcomes were checked against every sequential order, but JCStress itself has not run.
+- JCStress concurrency tests for the cache classes (docs/JCSTRESS.md): all 6 tests ran in `-m quick` on a 2-CPU Windows laptop: 84/84 jobs passed, 0 failed, 0 errors (short run, no CPU pinning; a pass is not a proof).
 - Done: project moved to Java 21 (the full suite passed on JDK 21 in my environment; the CI workflow still has to be switched to 21)
 - Done: the outgoing queue to each peer is limited by bytes as well as by message count (a dead follower used to make the leader queue without a practical limit; docs/RAFT.md)
 - Done: snapshots encoded and written off the Raft thread (leadership kept during an 800 ms snapshot in a test; freeze time of 1,000,000 entries 78 ms on one Linux machine)

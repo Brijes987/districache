@@ -16,7 +16,7 @@ import org.openjdk.jcstress.infra.results.II_Result;
 /**
  * Concurrency stress tests for {@link LRUCache} and {@link ShardedLRUCache}.
  *
- * <p>Each test is two or three threads doing one operation each on a fresh cache, then an arbiter that looks at the
+ * <p>Each test is two threads doing a short run of operations each (two actors only, because JCStress skips tests with more actors than CPUs) on a fresh cache, then an arbiter that looks at the
  * final state. Every outcome that can happen when the operations run one after another in SOME order is listed as
  * acceptable; every other outcome is forbidden, as is a failure of {@code verifyInternalConsistency()} (the map and the
  * linked lists disagree), reported as -99 in the second result slot.
@@ -94,9 +94,9 @@ public final class LruCacheStress {
         }
     }
 
-    /** Three writers of different keys into a cache that holds two: it must end with exactly two entries. */
+    /** Two writers of different keys into a cache that holds two: it must end with exactly two entries. */
     @JCStressTest
-    @Description("three puts into a cache of capacity two")
+    @Description("four puts from two threads into a cache of capacity two")
     @Outcome(id = "2, 0", expect = ACCEPTABLE, desc = "two entries, structure consistent")
     @Outcome(expect = FORBIDDEN, desc = "over capacity, under capacity, or broken structure")
     @State
@@ -104,18 +104,15 @@ public final class LruCacheStress {
         private final LRUCache<String, Integer> cache = new LRUCache<>(2, 0);
 
         @Actor
-        public void putA() {
+        public void putAB() {
             cache.put("a", 1);
-        }
-
-        @Actor
-        public void putB() {
             cache.put("b", 2);
         }
 
         @Actor
-        public void putC() {
+        public void putCD() {
             cache.put("c", 3);
+            cache.put("d", 4);
         }
 
         @Arbiter
@@ -166,7 +163,7 @@ public final class LruCacheStress {
 
     /** Buffered reads (approximate recency): the exact victim may differ, but size and structure must not. */
     @JCStressTest
-    @Description("buffered reads racing a put that evicts")
+    @Description("two buffered reads racing a put that evicts")
     @Outcome(id = "2, 0", expect = ACCEPTABLE, desc = "two entries, structure consistent after draining the buffer")
     @Outcome(expect = FORBIDDEN, desc = "wrong size or broken structure")
     @State
@@ -179,17 +176,13 @@ public final class LruCacheStress {
         }
 
         @Actor
-        public void getA() {
+        public void readers() {
             cache.get("a");
-        }
-
-        @Actor
-        public void getB() {
             cache.get("b");
         }
 
         @Actor
-        public void putC() {
+        public void writer() {
             cache.put("c", 3);
         }
 
@@ -203,7 +196,7 @@ public final class LruCacheStress {
 
     /** The sharded cache under writers on different keys: total size never exceeds the capacity. Slot 1: 1 if size <= 4. */
     @JCStressTest
-    @Description("three writers on a sharded cache")
+    @Description("two writers on a sharded cache")
     @Outcome(id = "1, 0", expect = ACCEPTABLE, desc = "size within capacity, every shard consistent")
     @Outcome(expect = FORBIDDEN, desc = "over capacity or broken structure")
     @State
@@ -214,16 +207,12 @@ public final class LruCacheStress {
         public void writer1() {
             cache.put("k1", 1);
             cache.put("k2", 2);
+            cache.put("k3", 3);
         }
 
         @Actor
         public void writer2() {
-            cache.put("k3", 3);
             cache.put("k4", 4);
-        }
-
-        @Actor
-        public void writer3() {
             cache.put("k5", 5);
             cache.put("k6", 6);
         }
