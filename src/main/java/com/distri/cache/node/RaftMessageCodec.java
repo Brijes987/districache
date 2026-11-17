@@ -19,6 +19,8 @@ final class RaftMessageCodec {
     private static final byte APPEND_ENTRIES_REPLY = 4;
     private static final byte INSTALL_SNAPSHOT = 5;
     private static final byte SNAPSHOT_CHUNK_REPLY = 6;
+    private static final byte PRE_VOTE = 7;
+    private static final byte PRE_VOTE_REPLY = 8;
     private static final int MAX_ENTRIES = 100_000;
 
     private RaftMessageCodec() {}
@@ -75,6 +77,16 @@ final class RaftMessageCodec {
                 out.writeLong(m.term());
                 out.writeLong(m.lastIncludedIndex());
                 out.writeLong(m.nextOffset());
+            } else if (message instanceof RaftMessage.PreVote m) {
+                out.writeByte(PRE_VOTE);
+                out.writeLong(m.term());
+                out.writeInt(m.candidateId());
+                out.writeLong(m.lastLogIndex());
+                out.writeLong(m.lastLogTerm());
+            } else if (message instanceof RaftMessage.PreVoteReply m) {
+                out.writeByte(PRE_VOTE_REPLY);
+                out.writeLong(m.term());
+                out.writeBoolean(m.granted());
             } else {
                 throw new IllegalArgumentException("unknown message type " + message);
             }
@@ -143,6 +155,9 @@ final class RaftMessageCodec {
             }
             case SNAPSHOT_CHUNK_REPLY -> message = new RaftMessage.SnapshotChunkReply(positive(in.readLong()),
                     positive(in.readLong()), nonNegative(in.readLong()));
+            case PRE_VOTE -> message = new RaftMessage.PreVote(positive(in.readLong()), in.readInt(),
+                    nonNegative(in.readLong()), nonNegative(in.readLong()));
+            case PRE_VOTE_REPLY -> message = new RaftMessage.PreVoteReply(nonNegative(in.readLong()), in.readBoolean());
             default -> throw new IOException("unknown message type " + type);
         }
         if (in.available() != 0) {

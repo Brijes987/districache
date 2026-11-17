@@ -17,9 +17,22 @@ import java.util.Set;
  *     last one; 0 turns snapshots off
  * @param snapshotChunkBytes largest piece of a snapshot sent in one message (at most
  *     {@link RaftStorage#MAX_SNAPSHOT_CHUNK_BYTES}); a bigger snapshot is sent as several chunks, one in flight at a time
+ * @param preVote before starting a real election (which raises the term), a node first asks whether a majority would
+ *     vote for it, without changing anything; a node that cannot reach a majority (it is cut off, or a leader is alive)
+ *     therefore never raises its term and cannot disrupt a healthy cluster when it comes back. Every node of a cluster
+ *     must use the same setting.
  */
 public record RaftConfig(int electionTimeoutMinTicks, int electionTimeoutMaxTicks, int heartbeatTicks,
-        int maxEntriesPerMessage, boolean checkQuorum, Set<Fault> faults, int snapshotEvery, int snapshotChunkBytes) {
+        int maxEntriesPerMessage, boolean checkQuorum, Set<Fault> faults, int snapshotEvery, int snapshotChunkBytes,
+        boolean preVote) {
+
+    /** Without pre-vote. */
+    public RaftConfig(int electionTimeoutMinTicks, int electionTimeoutMaxTicks, int heartbeatTicks,
+            int maxEntriesPerMessage, boolean checkQuorum, Set<Fault> faults, int snapshotEvery,
+            int snapshotChunkBytes) {
+        this(electionTimeoutMinTicks, electionTimeoutMaxTicks, heartbeatTicks, maxEntriesPerMessage, checkQuorum,
+                faults, snapshotEvery, snapshotChunkBytes, false);
+    }
 
     /** Default size of a snapshot chunk. */
     public static final int DEFAULT_SNAPSHOT_CHUNK_BYTES = 1024 * 1024;
@@ -59,7 +72,11 @@ public record RaftConfig(int electionTimeoutMinTicks, int electionTimeoutMaxTick
         /** A read-index read counts any earlier acknowledgement as proof of leadership, not one sent after the read. */
         READ_COUNT_OLD_ACKS,
         /** A follower appends a snapshot chunk wherever it arrives, ignoring its offset (duplicates and reordering corrupt it). */
-        SNAPSHOT_CHUNK_IGNORE_OFFSET
+        SNAPSHOT_CHUNK_IGNORE_OFFSET,
+        /** A node grants a pre-vote even though it heard from a live leader within the election timeout. */
+        PREVOTE_IGNORE_LEADER_LEASE,
+        /** A node that receives a pre-vote for a higher term adopts that term, as it would for a real vote request. */
+        PREVOTE_ADOPT_TERM
     }
 
     public RaftConfig {
@@ -89,23 +106,29 @@ public record RaftConfig(int electionTimeoutMinTicks, int electionTimeoutMaxTick
         Set<Fault> set = EnumSet.noneOf(Fault.class);
         set.addAll(java.util.Arrays.asList(faults));
         return new RaftConfig(electionTimeoutMinTicks, electionTimeoutMaxTicks, heartbeatTicks, maxEntriesPerMessage,
-                checkQuorum, set, snapshotEvery, snapshotChunkBytes);
+                checkQuorum, set, snapshotEvery, snapshotChunkBytes, preVote);
     }
 
     public RaftConfig withCheckQuorum(boolean value) {
         return new RaftConfig(electionTimeoutMinTicks, electionTimeoutMaxTicks, heartbeatTicks, maxEntriesPerMessage,
-                value, faults, snapshotEvery, snapshotChunkBytes);
+                value, faults, snapshotEvery, snapshotChunkBytes, preVote);
     }
 
     /** Snapshot after every {@code entries} applied entries (0 = never). */
     public RaftConfig withSnapshotEvery(int entries) {
         return new RaftConfig(electionTimeoutMinTicks, electionTimeoutMaxTicks, heartbeatTicks, maxEntriesPerMessage,
-                checkQuorum, faults, entries, snapshotChunkBytes);
+                checkQuorum, faults, entries, snapshotChunkBytes, preVote);
     }
 
     /** Send snapshots in chunks of at most {@code bytes}. */
     public RaftConfig withSnapshotChunkBytes(int bytes) {
         return new RaftConfig(electionTimeoutMinTicks, electionTimeoutMaxTicks, heartbeatTicks, maxEntriesPerMessage,
-                checkQuorum, faults, snapshotEvery, bytes);
+                checkQuorum, faults, snapshotEvery, bytes, preVote);
+    }
+
+    /** Turn pre-vote on or off (see {@link #preVote()}). */
+    public RaftConfig withPreVote(boolean value) {
+        return new RaftConfig(electionTimeoutMinTicks, electionTimeoutMaxTicks, heartbeatTicks, maxEntriesPerMessage,
+                checkQuorum, faults, snapshotEvery, snapshotChunkBytes, value);
     }
 }

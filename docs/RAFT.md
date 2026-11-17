@@ -172,6 +172,24 @@ All commands assume the project is built (`mvn compile`) and you are in the proj
   --client-secret-file client.secret`, with the same `--members` list on every server. Secrets are read from files, not
   the command line.
 
+## Pre-vote (opt-in, `--pre-vote`)
+
+**The problem.** In plain Raft a node that cannot hear the leader (its link is cut, or it was isolated and came back) times out, raises its term and starts an election. When it reconnects, its higher term makes the healthy leader step down. Pre-vote (Raft thesis section 9.6) adds a first round: before raising its term the node asks its peers "would you vote for me?" with the term it would use. Nothing changes on the receiver (term, vote, election timer). A peer says yes only if it has not heard from a live leader within the minimum election timeout, the proposed term is higher than its own, and the candidate's log is at least as up to date. Only after a majority says yes does the node start a real election.
+
+**How to use it.** Start every server with `--pre-vote` (or `RaftConfig.withPreVote(true)`). It is off by default. It must be set the same on every node of a cluster: a node with it off refuses every pre-vote, so a mixed cluster could not elect a replacement leader if the off nodes were a majority. That mixed case is not supported and not tested.
+
+**What was tested** (all pass in my Linux sandbox; `PreVoteTest` 34 tests, `PreVoteWireTest` 3, `PreVoteClusterTest` 1):
+- Scripted single-node cases: a timeout sends pre-votes without raising the term; a majority of grants starts a real election; no majority never raises the term; stale-round grants are ignored; a refusal carrying a higher term is adopted; a voter with a live leader refuses and changes nothing; a stale log is refused; a far-ahead proposed term is not adopted.
+- Simulator scenarios: with a full isolation or a one-way link failure (the node cannot hear the leader, the leader can hear it) the leader is deposed and the term rises without pre-vote; with pre-vote the leader stays and the term does not move. Liveness still holds after a leader crash (20 seeds, 5 nodes), a leader cut off, and a restart of all nodes. No pre-vote round is started under a healthy leader.
+- Randomised chaos: 60 normal, 40 brutal and 20 without-check-quorum seeds, replay determinism, and 60 linearizability-checked runs with pre-vote on.
+- Two hand-made breakages, each caught: ignoring the leader lease (caught in 10 of 10 one-way-cut runs) and adopting the proposed term on receipt (elections become impossible, caught as no leader within 2,000 steps in 10 of 10 seeds). This shows the tests can fail; it is not a proof the code is correct.
+- Real sockets: a 3-node cluster with pre-vote elects a leader, serves 30 writes, survives killing the leader, serves 30 more and reads all 60 back (run 3 times, passed 3 of 3 in the sandbox).
+- Two real bugs were found by these tests during development and fixed: a candidate whose election timed out kept its role and could never count grants (no leader after a crash), and a timed-out follower would have refused other nodes' pre-votes.
+
+**Windows run.** On the 2-CPU Windows 10 laptop the full `mvn clean test` gave 660 tests, 0 failures, 0 errors (one run; this includes all 38 pre-vote tests, 5 min 28 s total).
+
+**Not measured / not claimed.** Nothing was run on separate machines or under real network faults. The cost of the extra round (election delay) was not measured.
+
 ## What this does NOT claim
 
 - Not formally proven or model-checked. The claim is: tested with randomized fault injection against stated invariants.

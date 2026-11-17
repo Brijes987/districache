@@ -27,6 +27,8 @@ import java.util.Map;
  * --tls-truststore F          PKCS12 file with the certificate(s) to trust (servers authenticate each other with it)
  * --tls-truststore-password-file F  file holding the truststore password
  *                              (all four TLS options go together; see docs/SECURITY.md)
+ * --pre-vote                 ask a majority whether it would vote before starting an election, so a node that is cut
+ *                             off or has a live leader cannot raise the term; give every node the same setting
  * --snapshot-every N          snapshot the cache and drop the log it covers after every N applied entries
  *                              (default 10000; 0 = never: the log then grows without bound)
  * --metrics-port P             serve Prometheus metrics at http://127.0.0.1:P/metrics (--metrics-host H to bind elsewhere;
@@ -52,6 +54,7 @@ public final class ReplicatedServerMain {
         boolean fsync = true;
         int maxBatch = ReplicatedServer.DEFAULT_MAX_BATCH;
         int snapshotEvery = 10_000;
+        boolean preVote = false;
         com.distri.cache.raft.ReplicatedCache.ReadMode readMode = com.distri.cache.raft.ReplicatedCache.ReadMode.LOG;
         String tlsKeystore = null;
         String tlsKeystorePasswordFile = null;
@@ -71,6 +74,7 @@ public final class ReplicatedServerMain {
                     case "--capacity" -> capacity = Integer.parseInt(value(args, ++i));
                     case "--no-fsync" -> fsync = false;
                     case "--max-batch" -> maxBatch = Integer.parseInt(value(args, ++i));
+                    case "--pre-vote" -> preVote = true;
                     case "--snapshot-every" -> snapshotEvery = Integer.parseInt(value(args, ++i));
                     case "--read-mode" -> readMode = switch (value(args, ++i)) {
                         case "log" -> com.distri.cache.raft.ReplicatedCache.ReadMode.LOG;
@@ -97,7 +101,7 @@ public final class ReplicatedServerMain {
         } catch (IllegalArgumentException e) {
             System.err.println("error: " + e.getMessage());
             System.err.println("usage: ReplicatedServerMain --id N --members 0=host:peerPort:clientPort,... --data DIR"
-                    + " [--peer-secret-file F] [--client-secret-file F] [--tick-ms N] [--capacity N] [--no-fsync] [--max-batch N] [--snapshot-every N] [--read-mode log|read-index]"
+                    + " [--peer-secret-file F] [--client-secret-file F] [--tick-ms N] [--capacity N] [--no-fsync] [--max-batch N] [--snapshot-every N] [--pre-vote] [--read-mode log|read-index]"
                     + " [--tls-keystore F --tls-keystore-password-file F --tls-truststore F --tls-truststore-password-file F]"
                     + " [--metrics-port P [--metrics-host H]]");
             System.exit(2);
@@ -108,7 +112,7 @@ public final class ReplicatedServerMain {
         ReplicatedServer.Config base = ReplicatedServer.Config.of(id, members, Path.of(dataDir)).withFsync(fsync);
         ReplicatedServer.Config config = new ReplicatedServer.Config(base.id(), base.members(), base.dataDir(),
                 readSecret(peerSecretFile), readSecret(clientSecretFile),
-                new com.distri.cache.raft.RaftConfig(30, 60, 6, 64, true, java.util.Set.of(), snapshotEvery), tickMillis, fsync,
+                new com.distri.cache.raft.RaftConfig(30, 60, 6, 64, true, java.util.Set.of(), snapshotEvery).withPreVote(preVote), tickMillis, fsync,
                 capacity, base.requestTimeoutMillis());
         if (!fsync) {
             System.err.println("WARNING: --no-fsync: acknowledged writes can be lost if the machine loses power.");

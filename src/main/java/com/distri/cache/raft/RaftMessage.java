@@ -2,10 +2,11 @@ package com.distri.cache.raft;
 
 import java.util.List;
 
-/** The messages of the Raft protocol (the five of the paper, plus the reply to a snapshot chunk). Every message carries the sender's current term. */
+/** The messages of the Raft protocol (the five of the paper, the reply to a snapshot chunk, and the optional pre-vote pair). Every message carries the sender's current term. */
 public sealed interface RaftMessage
         permits RaftMessage.RequestVote, RaftMessage.RequestVoteReply, RaftMessage.AppendEntries,
-        RaftMessage.AppendEntriesReply, RaftMessage.InstallSnapshot, RaftMessage.SnapshotChunkReply {
+        RaftMessage.AppendEntriesReply, RaftMessage.InstallSnapshot, RaftMessage.SnapshotChunkReply,
+        RaftMessage.PreVote, RaftMessage.PreVoteReply {
 
     long term();
 
@@ -13,6 +14,19 @@ public sealed interface RaftMessage
     record RequestVote(long term, int candidateId, long lastLogIndex, long lastLogTerm) implements RaftMessage {}
 
     record RequestVoteReply(long term, boolean voteGranted) implements RaftMessage {}
+
+    /**
+     * "Would you vote for me if I started an election?" Sent before a real election when pre-vote is on.
+     * {@code term} is the term the candidate WOULD use (its current term plus one); the candidate has not raised its term
+     * and the receiver changes nothing (no term, no vote, no timer) however it answers.
+     */
+    record PreVote(long term, int candidateId, long lastLogIndex, long lastLogTerm) implements RaftMessage {}
+
+    /**
+     * When {@code granted}, {@code term} echoes the proposed term of the {@link PreVote}. When not granted it is the
+     * receiver's real current term, so a candidate that has fallen behind learns it.
+     */
+    record PreVoteReply(long term, boolean granted) implements RaftMessage {}
 
     /**
      * The leader replicates entries (empty for a heartbeat). {@code prevLogIndex/prevLogTerm} identify the entry

@@ -324,6 +324,12 @@ final class SimCluster {
         }
     }
 
+    /** Cuts the link from {@code from} to {@code to} in that direction only: {@code to} still reaches {@code from}. */
+    void cutOneWay(int from, int to) {
+        event("cut " + from + " -> " + to);
+        cut[from][to] = true;
+    }
+
     void isolate(int node) {
         partition(Set.of(node));
     }

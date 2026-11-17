@@ -35,6 +35,7 @@ final class TestCluster implements AutoCloseable {
     final Map<Integer, javax.net.ssl.SSLContext> tlsByNode = new HashMap<>(); // overrides tls for one server
     javax.net.ssl.SSLContext clientTls;                 // used by client(); null = plain TCP
     int snapshotChunkBytes = RaftConfig.DEFAULT_SNAPSHOT_CHUNK_BYTES; // set before start()
+    boolean preVote;                                   // set before start()
     int snapshotEvery;                                 // set before start(); 0 = snapshots off
 
     TestCluster(int n) throws IOException {
@@ -79,7 +80,7 @@ final class TestCluster implements AutoCloseable {
     ReplicatedServer.Config config(int i) {
         return ReplicatedServer.Config.of(i, members, root.resolve("node" + i))
                 .withSecrets(peerSecret, clientSecret)
-                .withTiming(new RaftConfig(20, 40, 4, 64, checkQuorum, Set.of(), snapshotEvery, snapshotChunkBytes), 5)
+                .withTiming(new RaftConfig(20, 40, 4, 64, checkQuorum, Set.of(), snapshotEvery, snapshotChunkBytes).withPreVote(preVote), 5)
                 .withFsync(fsync);
     }
 

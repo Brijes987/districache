@@ -76,6 +76,12 @@ public final class RaftNode {
 
     private final Set<Integer> votesGranted = new HashSet<>();
 
+    /** Pre-vote: true while this node is asking whether a majority would vote for it; its term has NOT been raised. */
+    private boolean preCandidate;
+    private final Set<Integer> preVotesGranted = new HashSet<>();
+    private long preVoteRoundsStarted;
+    private long preVotesDenied;
+
     // leader state
     private final Map<Integer, Long> nextIndex = new HashMap<>();
     private final Map<Integer, Long> matchIndex = new HashMap<>();
@@ -270,6 +276,21 @@ public final class RaftNode {
         return snapshotChunksReceived;
     }
 
+    /** True while this node is asking whether a majority would vote for it (pre-vote); its term has not been raised. */
+    public boolean isPreCandidate() {
+        return preCandidate;
+    }
+
+    /** How many pre-vote rounds this node has started. */
+    public long preVoteRoundsStarted() {
+        return preVoteRoundsStarted;
+    }
+
+    /** How many pre-votes this node has refused. */
+    public long preVotesDenied() {
+        return preVotesDenied;
+    }
+
     /** Times a snapshot was due but the state was too large to snapshot. */
     public long snapshotsSkipped() {
         return snapshotsSkipped;
@@ -300,7 +321,7 @@ public final class RaftNode {
         } else {
             electionElapsed++;
             if (electionElapsed >= electionTimeout) {
-                startElection();
+                electionTimeoutFired();
             }
         }
     }
@@ -422,7 +443,12 @@ public final class RaftNode {
 
     /** A message from server {@code from} arrived. */
     public void receive(int from, RaftMessage message) {
-        if (message.term() > currentTerm) {
+        // A pre-vote carries a term nobody has entered yet, and so does a granted reply to one: neither may move this
+        // node's term. (A refused reply carries the sender's real term, which is adopted like any other.)
+        boolean termIsOnlyAProposal = (message instanceof RaftMessage.PreVote
+                        && !config.faults().contains(RaftConfig.Fault.PREVOTE_ADOPT_TERM))
+                || (message instanceof RaftMessage.PreVoteReply r && r.granted());
+        if (message.term() > currentTerm && !termIsOnlyAProposal) {
             // Someone is in a newer term: whatever this node was, it is now a follower in that term.
             becomeFollower(message.term(), -1);
         }
@@ -430,6 +456,10 @@ public final class RaftNode {
             onRequestVote(from, m);
         } else if (message instanceof RaftMessage.RequestVoteReply m) {
             onRequestVoteReply(from, m);
+        } else if (message instanceof RaftMessage.PreVote m) {
+            onPreVote(from, m);
+        } else if (message instanceof RaftMessage.PreVoteReply m) {
+            onPreVoteReply(from, m);
         } else if (message instanceof RaftMessage.AppendEntries m) {
             onAppendEntries(from, m);
         } else if (message instanceof RaftMessage.AppendEntriesReply m) {
@@ -443,7 +473,73 @@ public final class RaftNode {
 
     // ------------------------------------------------------------------ elections
 
+    /** The election timeout fired. With pre-vote on, first find out whether an election could succeed. */
+    private void electionTimeoutFired() {
+        if (!config.preVote() || peers.isEmpty()) {
+            startElection();
+            return;
+        }
+        resetElectionTimer(); // also retries the pre-vote after another timeout if this one gets no majority
+        preCandidate = true;  // after the reset, which clears it
+        // This node no longer hears the leader, so it stops claiming there is one. That also means it will not refuse
+        // another follower's pre-vote on the grounds that "my leader is alive", which would let followers that time out
+        // together block each other after a leader crash.
+        leaderId = -1;
+        // A candidate whose election failed (a split vote) starts over from the follower state: with the term unchanged
+        // it asks again before raising the term further. Replies are only counted by a follower.
+        role = Role.FOLLOWER;
+        preVotesGranted.clear();
+        preVotesGranted.add(id);
+        preVoteRoundsStarted++;
+        long lastIndex = storage.lastIndex();
+        RaftMessage.PreVote request = new RaftMessage.PreVote(currentTerm + 1, id, lastIndex, storage.termAt(lastIndex));
+        for (int peer : peers) {
+            transport.send(peer, request);
+        }
+    }
+
+    /** Would this node vote for a candidate whose log ends at (lastLogIndex, lastLogTerm)? */
+    private boolean candidateLogUpToDate(long lastLogIndex, long lastLogTerm) {
+        long myLastIndex = storage.lastIndex();
+        long myLastTerm = storage.termAt(myLastIndex);
+        return lastLogTerm > myLastTerm || (lastLogTerm == myLastTerm && lastLogIndex >= myLastIndex);
+    }
+
+    /** True while this node believes a leader is alive: it is the leader, or it heard from one within a timeout. */
+    private boolean leaderIsAlive() {
+        if (role == Role.LEADER) {
+            return true;
+        }
+        return role == Role.FOLLOWER && leaderId != -1 && electionElapsed < config.electionTimeoutMinTicks();
+    }
+
+    private void onPreVote(int from, RaftMessage.PreVote m) {
+        boolean grant = false;
+        if (config.preVote() && m.term() > currentTerm
+                && (!leaderIsAlive() || config.faults().contains(RaftConfig.Fault.PREVOTE_IGNORE_LEADER_LEASE))
+                && candidateLogUpToDate(m.lastLogIndex(), m.lastLogTerm())) {
+            grant = true;
+        }
+        if (!grant) {
+            preVotesDenied++;
+        }
+        // Nothing changes here: no term, no vote, no timer reset.
+        transport.send(from, new RaftMessage.PreVoteReply(grant ? m.term() : currentTerm, grant));
+    }
+
+    private void onPreVoteReply(int from, RaftMessage.PreVoteReply m) {
+        if (!preCandidate || role != Role.FOLLOWER || !m.granted() || m.term() != currentTerm + 1) {
+            return;
+        }
+        preVotesGranted.add(from);
+        if (preVotesGranted.size() >= majority) {
+            preCandidate = false;
+            startElection();
+        }
+    }
+
     private void startElection() {
+        preCandidate = false;
         role = Role.CANDIDATE;
         currentTerm++;
         votedFor = id;
@@ -531,6 +627,7 @@ public final class RaftNode {
     }
 
     private void resetElectionTimer() {
+        preCandidate = false; // anything that restarts the wait (a leader's message, a vote given) ends a pre-vote
         electionElapsed = 0;
         int min = config.electionTimeoutMinTicks();
         int max = config.electionTimeoutMaxTicks();
@@ -551,6 +648,7 @@ public final class RaftNode {
         }
         role = Role.FOLLOWER; // a candidate that hears from a leader of its own term gives up
         leaderId = m.leaderId();
+        preCandidate = false; // a live leader: no need to find out whether an election could succeed
         electionElapsed = 0;
 
         long prevIndex = m.prevLogIndex();
@@ -685,6 +783,7 @@ public final class RaftNode {
         }
         role = Role.FOLLOWER;
         leaderId = m.leaderId();
+        preCandidate = false; // a live leader: no need to find out whether an election could succeed
         electionElapsed = 0;
 
         long index = m.lastIncludedIndex();
