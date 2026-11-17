@@ -13,7 +13,11 @@ final class RespWriter {
     private final BufferedOutputStream out;
 
     RespWriter(OutputStream out) {
-        this.out = new BufferedOutputStream(out, 8192);
+        this(out, 8192);
+    }
+
+    RespWriter(OutputStream out, int bufferBytes) {
+        this.out = new BufferedOutputStream(out, bufferBytes);
     }
 
     /** {@code +text}; text must not contain CR or LF. */

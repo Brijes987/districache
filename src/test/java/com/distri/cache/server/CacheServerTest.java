@@ -93,6 +93,30 @@ class CacheServerTest {
     }
 
     @Test
+    void repliesToCompletedCommandsAreSentWhenTheClientClosesInTheMiddleOfTheNextOne() throws Exception {
+        try (CacheServer server = start(100, 4, 8); Socket s = new Socket("127.0.0.1", server.port())) {
+            s.setSoTimeout(5000);
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+            bytes.writeBytes(RespTestClient.encode("PING"));
+            bytes.writeBytes("*2\r\n$4\r\nEC".getBytes());
+            s.getOutputStream().write(bytes.toByteArray());
+            s.shutdownOutput();
+            assertEquals("+PONG\r\n", new String(s.getInputStream().readAllBytes()));
+        }
+    }
+
+    @Test
+    void anErrorReplyIsDeliveredEvenWhenTheClientKeepsSendingAfterIt() throws Exception {
+        try (CacheServer server = start(100, 4, 8); Socket s = new Socket("127.0.0.1", server.port())) {
+            s.setSoTimeout(5000);
+            s.getOutputStream().write("*abc\r\n".getBytes());
+            s.getOutputStream().write(new byte[2 << 20]); // far more than the server will ever parse
+            s.shutdownOutput();
+            assertEquals("-ERR Protocol error: invalid multibulk length\r\n", new String(s.getInputStream().readAllBytes()));
+        }
+    }
+
+    @Test
     void inlineCommandWorks() throws Exception {
         try (CacheServer server = start(100, 4, 8); RespTestClient c = new RespTestClient(server.port())) {
             c.sendRaw("PING\r\n".getBytes());

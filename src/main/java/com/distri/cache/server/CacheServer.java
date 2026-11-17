@@ -291,6 +291,12 @@ public final class CacheServer implements AutoCloseable {
                 } catch (RespProtocolException e) {
                     writer.error("ERR Protocol error: " + e.getMessage());
                     writer.flush();
+                    lingerBeforeClose(socket);
+                    return;
+                } catch (EOFException e) {
+                    // The client closed in the middle of a command. Replies to the commands before it that are
+                    // still buffered (they were held back because more input was waiting) are owed and are sent.
+                    writer.flush();
                     return;
                 }
                 if (command == null) {
@@ -330,6 +336,7 @@ public final class CacheServer implements AutoCloseable {
                     writer.flush();
                 }
                 if (result == CommandExecutor.Result.CLOSE) {
+                    lingerBeforeClose(socket);
                     return;
                 }
             }
@@ -345,6 +352,33 @@ public final class CacheServer implements AutoCloseable {
         } finally {
             clients.remove(socket);
             clientSlots.release();
+        }
+    }
+
+    /** How long, at most, to keep discarding a client's input after the server has decided to close. */
+    static final int LINGER_MILLIS = 1000;
+
+    /**
+     * Closing a socket that still has unread input from the client makes the operating system send a reset instead of
+     * an orderly close, and on Windows a reset can destroy the reply the client has not read yet (an error for a
+     * too-large command, the answer before QUIT). So the server signals end-of-output, then reads and discards what the
+     * client is still sending, for at most {@link #LINGER_MILLIS}, and only then closes.
+     */
+    private static void lingerBeforeClose(Socket socket) {
+        if (socket instanceof SSLSocket) {
+            return; // TLS has its own close handshake
+        }
+        try {
+            socket.shutdownOutput();
+            socket.setSoTimeout(200);
+            byte[] sink = new byte[8192];
+            long deadline = System.nanoTime() + LINGER_MILLIS * 1_000_000L;
+            java.io.InputStream in = socket.getInputStream();
+            while (System.nanoTime() < deadline && in.read(sink) >= 0) {
+                // discard
+            }
+        } catch (IOException ignored) {
+            // the client is gone or timed out: closing now is fine
         }
     }
 

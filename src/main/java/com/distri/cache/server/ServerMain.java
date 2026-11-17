@@ -6,6 +6,8 @@ import java.io.IOException;
 /**
  * Starts a cache server. Options: {@code --host H} (default 127.0.0.1), {@code --port P} (default 6380),
  * {@code --capacity N} (default 100000), {@code --shards N} (default 16), {@code --max-clients N} (default 128).
+ * {@code --io nio} serves connections from a few event-loop threads ({@code --io-threads N}) instead of one thread
+ * each; it does not support TLS or replication.
  * Persistence is off unless {@code --aof PATH} is given; then {@code --fsync always|everysec|no} (default
  * everysec) and {@code --aof-compact-bytes N} (default 64 MiB, 0 turns automatic compaction off) apply.
  *
@@ -34,6 +36,8 @@ public final class ServerMain {
         int capacity = 100_000;
         int shards = ShardedLRUCache.DEFAULT_SHARDS;
         int maxClients = CacheServer.DEFAULT_MAX_CLIENTS;
+        boolean nio = false;
+        int ioThreads = 0; // 0: the server's default
         String aofPath = null;
         AppendOnlyLog.FsyncPolicy fsync = AppendOnlyLog.FsyncPolicy.EVERYSEC;
         long compactBytes = AppendOnlyLog.DEFAULT_COMPACTION_THRESHOLD_BYTES;
@@ -66,6 +70,17 @@ public final class ServerMain {
                     case "--capacity" -> capacity = Integer.parseInt(value);
                     case "--shards" -> shards = Integer.parseInt(value);
                     case "--max-clients" -> maxClients = Integer.parseInt(value);
+                    case "--io" -> {
+                        if (value.equals("nio")) {
+                            nio = true;
+                        } else if (value.equals("blocking")) {
+                            nio = false;
+                        } else {
+                            usage("--io must be blocking or nio");
+                            return;
+                        }
+                    }
+                    case "--io-threads" -> ioThreads = Integer.parseInt(value);
                     case "--aof" -> aofPath = value;
                     case "--fsync" -> fsync = AppendOnlyLog.FsyncPolicy.parse(value);
                     case "--aof-compact-bytes" -> compactBytes = Long.parseLong(value);
@@ -162,11 +177,33 @@ public final class ServerMain {
             }
         }
         final Replication finalReplication = replication;
-        CacheServer server = new CacheServer(cache, host, port, maxClients, log, security, replication);
+        if (nio && (replication != null || security.tlsContext() != null)) {
+            usage("--io nio does not support TLS or replication yet; use --io blocking for those");
+            return;
+        }
+        if (ioThreads != 0 && !nio) {
+            usage("--io-threads only applies with --io nio");
+            return;
+        }
+        final AutoCloseable server;
+        final int boundPort;
+        if (nio) {
+            NioCacheServer nioServer = new NioCacheServer(cache, host, port, maxClients, log, security);
+            if (ioThreads > 0) {
+                nioServer.ioThreads(ioThreads);
+            }
+            server = nioServer;
+        } else {
+            server = new CacheServer(cache, host, port, maxClients, log, security, replication);
+        }
         com.distri.cache.metrics.MetricsServer metricsServer = null;
         if (metricsPort >= 0) {
             com.distri.cache.metrics.MetricsRegistry registry = new com.distri.cache.metrics.MetricsRegistry();
-            server.enableMetrics(registry);
+            if (server instanceof NioCacheServer n) {
+                n.enableMetrics(registry);
+            } else {
+                ((CacheServer) server).enableMetrics(registry);
+            }
             registry.gauge("districache_up", "1 while the server process is running.", () -> 1);
             try {
                 metricsServer = new com.distri.cache.metrics.MetricsServer(registry, metricsHost, metricsPort).start();
@@ -180,7 +217,13 @@ public final class ServerMain {
             }
         }
         final com.distri.cache.metrics.MetricsServer finalMetrics = metricsServer;
-        server.start();
+        if (server instanceof NioCacheServer n) {
+            n.start();
+            boundPort = n.port();
+        } else {
+            ((CacheServer) server).start();
+            boundPort = ((CacheServer) server).port();
+        }
         if (replication != null && primaryHost != null) {
             replication.replicaOf(primaryHost, primaryPort);
             System.out.println("Replicating from " + primaryHost + ":" + primaryPort + " (read-only replica)");
@@ -191,7 +234,11 @@ public final class ServerMain {
             if (finalMetrics != null) {
                 finalMetrics.close();
             }
-            server.close();
+            try {
+                server.close();
+            } catch (Exception e) {
+                System.err.println("closing the server failed: " + e);
+            }
             if (finalReplication != null) {
                 finalReplication.close();
             }
@@ -204,8 +251,8 @@ public final class ServerMain {
                 }
             }
         }));
-        System.out.println("DistriCache listening on " + host + ":" + server.port()
-                + " (capacity " + capacity + ", " + cache.shardCount() + " shards; password "
+        System.out.println("DistriCache listening on " + host + ":" + boundPort
+                + " (" + (nio ? "event-loop I/O" : "thread-per-connection I/O") + ", capacity " + capacity + ", " + cache.shardCount() + " shards; password "
                 + (security.password() != null ? "required" : "not required") + ", TLS "
                 + (security.tlsContext() != null ? "on" : "off") + "). Ctrl+C to stop.");
         // The server threads are daemon threads, so keep the main thread alive until the process is stopped.
@@ -233,6 +280,7 @@ public final class ServerMain {
     private static void usage(String problem) {
         System.err.println(problem);
         System.err.println("usage: ServerMain [--host H] [--port P] [--capacity N] [--shards N] [--max-clients N]\n"
+                + "             [--io blocking|nio [--io-threads N]]\n"
                 + "             [--aof PATH [--fsync always|everysec|no] [--aof-compact-bytes N]]\n"
                 + "             [--password-file PATH] [--tls-keystore PATH [--tls-keystore-password-file PATH]]\n"
                 + "             [--allow-replicas | --replicaof HOST:PORT] [--repl-backlog-bytes N]\n"

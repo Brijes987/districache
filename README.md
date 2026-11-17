@@ -276,7 +276,7 @@ cluster has not been tested on separate machines or under real network faults be
   that has not been measured (docs/READ_BUFFER.md). `ShardedLRUCache` improves 4-thread throughput by 1.2x to 2.8x
   over the single-lock cache on the test machine (2 cores) but does not exceed its own single-thread speed there.
 - Cleanup removes all expired entries under the write lock, so a large batch expiring at once briefly blocks writers on
-  that shard. The server uses one thread per connection and has no idle timeout once authenticated; keys and values are
+  that shard. The default server uses one thread per connection (an opt-in event-loop mode, `--io nio`, is described in docs/NIO.md) and has no idle timeout once authenticated; keys and values are
   limited to 1 MiB each and 8 MiB per command.
 - Persistence is a single append-only log that serialises writes while on and does not log evictions (docs/PERSISTENCE.md).
 - Security is basic: one shared password (no users or permissions), no limit on guesses across connections, no client
@@ -323,6 +323,7 @@ cluster has not been tested on separate machines or under real network faults be
 - Done: snapshots encoded and written off the Raft thread (leadership kept during an 800 ms snapshot in a test; freeze time of 1,000,000 entries 78 ms on one Linux machine)
 - Done: chunked snapshot transfer (1 MiB chunks, acknowledged one at a time; tested including a 42 MB state, above the old 32 MiB limit)
 - Done: opt-in buffered reads with a before/after JMH comparison (docs/READ_BUFFER.md); not yet exposed as a server flag
+- Done: opt-in event-loop server (`--io nio`, no TLS or replication): same replies byte for byte as the blocking server on 35 test inputs; in my Linux sandbox 8,000 idle connections cost 0 extra threads and 46 MiB instead of 8,000 threads and 577 MiB, throughput was higher at 16-256 connections but p99 latency was worse at 64 (docs/NIO.md); not yet measured on the Windows laptop
 - Done: opt-in TLS for the replicated mode (docs/SECURITY.md); cost not measured
 - Done: opt-in read-index reads (`--read-mode read-index`), linearizability-checked and measured (docs/READ_INDEX.md): a large GET gain with fsync on and few clients, none shown otherwise
 - Done (one 2-CPU, 4 GB Windows laptop): GC pauses under G1, Parallel and ZGC and snapshot-taking time by cache size (docs/GC_PAUSES.md). The first runs were probably distorted by memory shortage; with a 1 GiB heap and 500,000 entries the worst stall of any collector was 0.5 s and ZGC stop-the-world pauses were under 2 ms. Not repeated, no larger machine tried. Before snapshots moved to the background, taking one of 500,000 entries took 0.86 s on that laptop, longer than the default election timeout, and a test showed the leader losing leadership; now only the state-freezing step runs on the Raft thread: 6.2 ms median (worst 6.7) for 100,000 entries and 22.9 ms median (worst 32.1) for 500,000 on that laptop, with encoding (0.88 s median at 500,000) done in the background. In a 3-server test there with an 800 ms snapshot the leader kept term 1 and the slowest write was 19 ms. Freeze time for larger states was not measured there. Tool written but not yet run for results: `RemoteProbe` for separate machines (docs/MULTI_MACHINE.md, results table empty).

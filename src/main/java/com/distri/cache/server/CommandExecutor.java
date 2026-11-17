@@ -29,6 +29,8 @@ final class CommandExecutor {
     private int failedAttempts;
     private String[] pendingPsync;               // set when the connection is about to become a replica link
     private ServerMetrics metrics;               // null when metrics are off
+    private boolean deferAuthDelay;              // event-loop server: report the delay instead of sleeping
+    private long pendingAuthDelayMillis;
 
     static final int MAX_FAILED_AUTH_ATTEMPTS = 5;
     static final long FAILED_AUTH_DELAY_MILLIS = 250;
@@ -53,6 +55,21 @@ final class CommandExecutor {
 
     void setMetrics(ServerMetrics metrics) {
         this.metrics = metrics;
+    }
+
+    /**
+     * An event-loop thread must never sleep, so it asks for the failed-AUTH delay to be reported through
+     * {@link #takeAuthDelayMillis()} and holds the reply back itself.
+     */
+    void deferAuthDelay() {
+        this.deferAuthDelay = true;
+    }
+
+    /** The delay owed for a failed AUTH since the last call (0 if none); clears it. */
+    long takeAuthDelayMillis() {
+        long d = pendingAuthDelayMillis;
+        pendingAuthDelayMillis = 0;
+        return d;
     }
 
     /** After {@link Result#REPLICATE}: the PSYNC arguments (replication id, offset). */
@@ -196,10 +213,14 @@ final class CommandExecutor {
         if (metrics != null) {
             metrics.authFailures.increment();
         }
-        try {
-            Thread.sleep(FAILED_AUTH_DELAY_MILLIS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        if (deferAuthDelay) {
+            pendingAuthDelayMillis = FAILED_AUTH_DELAY_MILLIS;
+        } else {
+            try {
+                Thread.sleep(FAILED_AUTH_DELAY_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
         out.error("WRONGPASS invalid password");
         return failedAttempts >= MAX_FAILED_AUTH_ATTEMPTS ? Result.CLOSE : Result.CONTINUE;
