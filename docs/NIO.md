@@ -45,7 +45,7 @@ over the 8 MiB limit). The event-loop server sent `-ERR Protocol error: command 
 nothing**. The cause is the same as the earlier "max number of clients" failure: closing a socket that still has unread
 input from the client makes the operating system send a reset, and on Windows the reset can destroy the reply before
 the client reads it. I could not reproduce this on Linux (both servers delivered the error 10 of 10 times in a test
-that finishes sending before it reads), so the fix is the standard one and is **unproven until it passes on Windows**:
+that finishes sending before it reads), so the fix is the standard one. The failing test passed on Windows afterwards (one full run, 622 tests, 0 failures), which is evidence but not proof, since the failure was intermittent in kind:
 after the last reply both servers signal end-of-output (`shutdownOutput`) and then discard what the client is still
 sending for at most 1 second before closing (a "lingering close"). It applies when the server closes on a protocol error,
 on `QUIT` and after too many failed `AUTH` attempts, not to TLS connections. Side effect: a client that sends `QUIT` and
@@ -89,10 +89,27 @@ Reading it honestly:
 - Each cell except the 64 x 1 row is a single run, and the load generator competes with the server for 2 CPUs. A different
   machine, more CPUs or a different load could change the ordering.
 
-### Your laptop (Windows 10, 2 CPUs)
-Not run yet. To fill the tables in, run (after `mvn -q clean package -DskipTests`; use `;` on Windows):
+### Your laptop (Windows 10, 2 CPUs, JDK 23.0.1), one run of each
+Memory here is the working set from `tasklist`, not Linux's resident size, so do not compare it with the table above.
 
-    java -cp target\classes;target\test-classes com.distri.cache.server.ServerIoBenchmark --io blocking --idle 2000
-    java -cp target\classes;target\test-classes com.distri.cache.server.ServerIoBenchmark --io nio --idle 2000
+| | Thread per connection | Event loop |
+|---|---|---|
+| Threads, 0 connections to 2,000 idle | 22 to 2,021 (+1,999) | 23 to 23 (+0) |
+| Memory, 0 to 2,000 idle | 40.0 to 218.1 MiB (+178.1, 91 KiB each) | 43.7 to 54.6 MiB (+10.9, 5.6 KiB each) |
+| Time to open the 2,000 connections | 2,420 ms | 1,726 ms |
+| `GET`, 64 connections x 1 | 19,039 requests/s (median 3.10 ms, p99 7.11 ms) | 17,645 requests/s (median 3.01 ms, p99 9.93 ms) |
 
-Memory is read with `tasklist` (working set) on Windows, which is not directly comparable with the Linux resident size.
+Reading it honestly:
+- The idle-connection result repeats the Linux one: no extra threads and about 5.6 KiB per connection against 91 KiB.
+- **On this laptop the event loop did not show a throughput advantage:** 17,645 against 19,039 requests/s, one run each,
+  with 2-second warm-ups of 7,165 and 12,049 requests/s that show how unsteady the machine was. I cannot say from one
+  run whether that 7% difference is real or noise, and I did not repeat it. Its p99 latency was again worse
+  (9.9 ms against 7.1 ms), as it was on Linux.
+- Throughput here is about 8 times lower than in my Linux sandbox for both servers (Windows loopback, a shared 2-CPU
+  machine, and a load generator competing for the same CPUs), so the Linux throughput table says nothing about this laptop.
+- So the claim this project can make is about **idle connections** (threads and memory). A throughput or latency gain was
+  seen on Linux and not on Windows, and the event loop's tail latency was worse on both.
+
+To repeat: `mvn -q clean package -DskipTests`, then
+`java -cp target\classes;target\test-classes com.distri.cache.server.ServerIoBenchmark --io nio --idle 2000`
+(and `--io blocking`).
