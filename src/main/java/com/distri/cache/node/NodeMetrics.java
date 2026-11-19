@@ -69,6 +69,12 @@ final class NodeMetrics {
                 () -> with(server, NodeRuntime::leaderChanges));
         registry.gauge("districache_raft_times_became_leader", "Times this server became leader since start.",
                 () -> with(server, NodeRuntime::timesLeader));
+        registry.gauge("districache_raft_prevote_rounds",
+                "Pre-vote rounds this server started because it stopped hearing a leader (0 unless --pre-vote); only grows.",
+                () -> with(server, NodeRuntime::preVoteRounds));
+        registry.gauge("districache_raft_prevotes_denied",
+                "Pre-vote requests from other servers this one refused (0 unless --pre-vote); only grows.",
+                () -> with(server, NodeRuntime::preVotesDenied));
         registry.gauge("districache_raft_snapshot_index",
                 "Log index covered by this server's latest snapshot (entries up to it were dropped from the log); 0 for none.",
                 () -> with(server, NodeRuntime::snapshotIndex));

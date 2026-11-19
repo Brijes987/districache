@@ -1,0 +1,16 @@
+# Memory-limited override for a small machine (Docker Desktop given about 1.8 GiB). Use together with the main file and
+# leave Grafana out by naming the services:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.small.yml up --build n1 n2 n3 prometheus
+#
+# Each server gets a 128 MiB Java heap and a 320 MiB container limit. Whether that is enough was measured only by the
+# results in docs/DOCKER.md.
+services:
+  n1: &small
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx128m"
+    mem_limit: 320m
+  n2: *small
+  n3: *small
+  prometheus:
+    mem_limit: 256m

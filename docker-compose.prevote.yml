@@ -1,0 +1,9 @@
+# Variant of docker-compose.small.yml: pre-vote on every server.
+# Use all three files: -f docker-compose.yml -f docker-compose.small.yml -f docker-compose.prevote.yml
+services:
+  n1:
+    command: ["com.distri.cache.node.ReplicatedServerMain", "--id", "1", "--members", "1=n1:7001:6381,2=n2:7001:6381,3=n3:7001:6381", "--data", "/data", "--peer-secret-file", "/run/secrets/peer_secret", "--client-secret-file", "/run/secrets/client_secret", "--read-mode", "read-index", "--metrics-port", "9100", "--metrics-host", "0.0.0.0", "--pre-vote"]
+  n2:
+    command: ["com.distri.cache.node.ReplicatedServerMain", "--id", "2", "--members", "1=n1:7001:6381,2=n2:7001:6381,3=n3:7001:6381", "--data", "/data", "--peer-secret-file", "/run/secrets/peer_secret", "--client-secret-file", "/run/secrets/client_secret", "--read-mode", "read-index", "--metrics-port", "9100", "--metrics-host", "0.0.0.0", "--pre-vote"]
+  n3:
+    command: ["com.distri.cache.node.ReplicatedServerMain", "--id", "3", "--members", "1=n1:7001:6381,2=n2:7001:6381,3=n3:7001:6381", "--data", "/data", "--peer-secret-file", "/run/secrets/peer_secret", "--client-secret-file", "/run/secrets/client_secret", "--read-mode", "read-index", "--metrics-port", "9100", "--metrics-host", "0.0.0.0", "--pre-vote"]

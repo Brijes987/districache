@@ -50,6 +50,8 @@ final class NodeRuntime implements AutoCloseable {
     private volatile long snapshotChunksSent;
     private volatile long snapshotChunksReceived;
     private volatile long pendingReads;
+    private volatile long preVoteRounds;  // pre-vote rounds this node started (0 unless --pre-vote)
+    private volatile long preVotesDenied; // pre-vote requests this node refused
 
     /**
      * @param maxBatch group commit: the loop runs at most this many queued tasks in a row, without waiting, and proposes the client writes among them with ONE log append (one
@@ -175,6 +177,14 @@ final class NodeRuntime implements AutoCloseable {
         return timesLeader;
     }
 
+    long preVoteRounds() {
+        return preVoteRounds;
+    }
+
+    long preVotesDenied() {
+        return preVotesDenied;
+    }
+
     long snapshotIndex() {
         return snapshotIndex;
     }
@@ -282,6 +292,8 @@ final class NodeRuntime implements AutoCloseable {
         snapshotChunksSent = node.snapshotChunksSent();
         snapshotChunksReceived = node.snapshotChunksReceived();
         pendingReads = node.pendingReads();
+        preVoteRounds = node.preVoteRoundsStarted();
+        preVotesDenied = node.preVotesDenied();
     }
 
     @Override

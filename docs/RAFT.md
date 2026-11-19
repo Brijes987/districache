@@ -188,6 +188,8 @@ All commands assume the project is built (`mvn compile`) and you are in the proj
 
 **Windows run.** On the 2-CPU Windows 10 laptop the full `mvn clean test` gave 660 tests, 0 failures, 0 errors (one run; this includes all 38 pre-vote tests, 5 min 28 s total).
 
+**Docker, under write load (docs/DOCKER.md).** In one of two runs on a 2-CPU Docker VM, killing the leader left the two surviving servers without a leader for over 60 seconds with pre-vote on; the other run recovered after 2.9 s. I could not reproduce the failure in my Linux sandbox and do not know its cause, so pre-vote is not shown to be reliable under load in that setting.
+
 **Not measured / not claimed.** Nothing was run on separate machines or under real network faults. The cost of the extra round (election delay) was not measured.
 
 ## What this does NOT claim
