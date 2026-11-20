@@ -239,6 +239,14 @@ public final class ReplicatedServer implements AutoCloseable {
         transport.block(peers);
     }
 
+    /**
+     * Test hook: a one-way cut. This server's messages to {@code outgoing} and messages it would receive from
+     * {@code incoming} are dropped; the other directions keep working. Pass two empty sets to heal. Not for production use.
+     */
+    public void blockPeers(Set<Integer> outgoing, Set<Integer> incoming) {
+        transport.block(outgoing, incoming);
+    }
+
     /** True if the server stopped itself after an unexpected error. */
     public boolean failed() {
         return runtime != null && runtime.failed();

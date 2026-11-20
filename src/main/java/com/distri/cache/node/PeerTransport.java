@@ -60,7 +60,8 @@ final class PeerTransport implements Transport, AutoCloseable {
     private final Semaphore inboundSlots;
     private final AtomicLong dropped = new AtomicLong();
     private volatile boolean closed;
-    private volatile Set<Integer> blocked = Set.of();
+    private volatile Set<Integer> blockedOut = Set.of(); // messages to these peers are dropped
+    private volatile Set<Integer> blockedIn = Set.of();  // messages from these peers are dropped
     private ServerSocket serverSocket;
     private final javax.net.ssl.SSLContext tls; // null: plain TCP
 
@@ -110,13 +111,19 @@ final class PeerTransport implements Transport, AutoCloseable {
 
     /** Test hook: silently drop every message to and from these peers, as a network partition would. */
     void block(Set<Integer> peers) {
-        this.blocked = Set.copyOf(peers);
+        block(peers, peers);
+    }
+
+    /** Test hook: a one-way cut. Messages to {@code out} and from {@code in} are dropped; the other directions work. */
+    void block(Set<Integer> out, Set<Integer> in) {
+        this.blockedOut = Set.copyOf(out);
+        this.blockedIn = Set.copyOf(in);
     }
 
     @Override
     public void send(int to, RaftMessage message) {
         BlockingQueue<byte[]> queue = queues.get(to);
-        if (queue == null || closed || blocked.contains(to)) {
+        if (queue == null || closed || blockedOut.contains(to)) {
             return;
         }
         AtomicLong waiting = queuedBytes.get(to);
@@ -249,7 +256,7 @@ final class PeerTransport implements Transport, AutoCloseable {
             socket.setSoTimeout(0);
             while (!closed) {
                 RaftMessage message = RaftMessageCodec.decode(Frames.read(in));
-                if (!blocked.contains(from)) {
+                if (!blockedIn.contains(from)) {
                     sink.deliver(from, message);
                 }
             }

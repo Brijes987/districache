@@ -192,6 +192,42 @@ All commands assume the project is built (`mvn compile`) and you are in the proj
 
 **Not measured / not claimed.** Nothing was run on separate machines or under real network faults. The cost of the extra round (election delay) was not measured.
 
+## Network partitions on real servers (`RealPartitionLinearizabilityTest`)
+
+Five real servers over real TCP and real files; the partition is made by dropping the peer messages between the two
+sides (the servers' client ports keep working, as when only the servers' network is split). Four clients run at once and
+every call and answer is recorded with real timestamps, and the Wing-Gong checker decides whether the recorded history
+could come from one correct key-value map. One client can only reach the server that was leader when the cut began, so it
+is the one that would see a stale read or a wrongly acknowledged write from the cut-off leader.
+
+| Test | Setting | What is cut |
+|---|---|---|
+| leader alone, read-index, no check-quorum | the old leader stays leader through the cut | the leader from the other four |
+| same with pre-vote | | |
+| log reads, check-quorum on, pre-vote on | | |
+| leader plus one follower (2 of 5) | read-index, pre-vote | the pair from the other three |
+| random cuts, 6 rounds, pre-vote off and on | read-index | 1 or 2 random servers each round |
+| fault switched on: `READ_SKIP_LEADERSHIP_CHECK` | read-index, no check-quorum | the leader alone |
+| one-way cut, 3 servers, pre-vote on and off | | a follower stops hearing the leader (its own messages still get out) |
+
+What the runs showed (Linux sandbox; the class passed 6 times in a row after the test was fixed, then once more inside
+the full suite of 569 tests). On the 2-CPU Windows laptop the full suite gave 669 tests, 0 failures, and the 8 partition tests took 50.8 s in one run, with the switched-on mistake caught there as well (the pinned client read `"c4-18"` after the other side had acknowledged newer writes):
+
+- Every healthy-setting history was linearizable, and in each of those tests the majority side acknowledged at least 20
+  writes during the run, so the cut was real.
+- **The test can fail.** With the known mistake switched on, the cut-off leader answered reads from its own copy: the
+  pinned client read `x` as absent while the other side had already acknowledged `"c2-4"` for it, and the checker
+  reported NOT LINEARIZABLE.
+- **One-way cut:** with pre-vote the leader kept its leadership and the term did not move while the follower could not
+  hear it, and 20 writes still succeeded; without pre-vote the term rose.
+- My first version of this test failed 5 of 8 runs because it wrote two starting values through a client whose writes were
+  not put in the recorded history, so the checker saw a value nobody had written. That was a flaw in the test, not in the
+  servers; the starting writes are now recorded.
+
+Not claimed: partitions here are made inside the servers (messages dropped), not at the network layer; only 5-server
+groups (3 for the one-way cut), fixed random seeds, short runs (a few seconds per scenario); no membership changes; the
+Docker runs in docs/DOCKER.md are a separate and less clean result.
+
 ## What this does NOT claim
 
 - Not formally proven or model-checked. The claim is: tested with randomized fault injection against stated invariants.
