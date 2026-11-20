@@ -9,15 +9,32 @@ thread-safe LRU cache with per-entry TTL (a hash map plus a **hand-written doubl
 1. **A single server** that speaks a subset of the Redis protocol, with persistence, password and TLS, and
    asynchronous primary-replica replication.
 2. **A replicated cluster** built on **Raft** (written from scratch): three or more server processes elect a leader, replicate
-   writes through a durable log, survive the leader being killed, and give clients exactly-once retries.
+   writes through a durable log with group commit, take and ship snapshots, serve linearizable reads through the log or
+   by read-index, optionally use pre-vote, survive the leader being killed, and give clients exactly-once retries.
 3. **Evidence for the claims**: a deterministic fault-injecting simulator, property-based tests, a linearizability
-   checker run on recorded client histories (in the simulator and against real killed processes), and a Prometheus
-   metrics endpoint.
+   checker run on recorded client histories (in the simulator and against real servers that are killed or cut off from
+   each other), JCStress tests, a Prometheus metrics endpoint, and a reduced Docker Compose trial.
 
 Everything stated here is backed by a test or a measurement in this repository. What is **not** done is listed in
 [Known limitations](#known-limitations).
 
+## At a glance
+Every row is one measurement or test result from this repository, with where it was taken. Machine for the Windows rows:
+Windows 10, 2 CPUs, 4 GB RAM, one run each unless stated. None of these are production capacity numbers.
+
+| What | Result | Where |
+|---|---|---|
+| Test suite | 669 tests, 0 failures (Windows laptop, one run); CI green | [Testing](#testing) |
+| Leader killed with SIGKILL under a writer | first write acknowledged again after 713 ms; 600 writes, 0 lost; 1,324 recorded operations checked LINEARIZABLE | [Kill-the-leader demo](#kill-the-leader-demo) |
+| Group commit (fsync on, 32 clients, SET) | 310 to 3,982 ops/s, p50 83.6 to 7.1 ms; no gain with one client (203 vs 201) | [docs/GROUP_COMMIT.md](docs/GROUP_COMMIT.md) |
+| Linearizability checker on simulated histories | correct servers passed 126 of 126 runs; deliberately broken servers were caught (28 of 60 and 30 of 30) | [docs/RAFT.md](docs/RAFT.md) |
+| Real-server partitions (5 servers) | recorded histories linearizable in every healthy setting; a switched-on stale-read mistake was caught | [docs/RAFT.md](docs/RAFT.md) |
+| Event-loop server, 2,000 idle connections | +0 threads and +10.9 MiB instead of +1,999 threads and +178.1 MiB; **no throughput gain** at 64 connections on this machine (17,645 vs 19,039 req/s) | [docs/NIO.md](docs/NIO.md) |
+| JCStress (6 tests, quick mode) | 84 of 84 jobs passed; a pass is not a proof | [docs/JCSTRESS.md](docs/JCSTRESS.md) |
+| Docker trial (3 servers + Prometheus in a 1.8 GiB VM) | 35 to 48 MiB per server idle; killing the leader under load stalled writes 16 s with default timings and 2.9 s with longer ones; **one pre-vote run did not elect a leader in 60 s, cause unknown** | [docs/DOCKER.md](docs/DOCKER.md) |
+
 ## Contents
+- [At a glance](#at-a-glance)
 - [Architecture](#architecture)
 - [Quick start](#quick-start)
 - [The cache](#the-cache)
@@ -259,6 +276,10 @@ ordering, so it is an upper bound, not a fair match. The replicated cluster benc
 - **Real processes**: a test that kills real server leaders on real disks and checks the recorded history. Limits: with
   check-quorum on, the stale-read bug is mostly masked in real time (a cut-off leader steps down quickly), while the
   simulator still catches it; see docs/RAFT.md.
+- **Real network partitions**: five real servers with the peer links cut in several shapes (the leader alone, the leader
+  plus one follower, random cuts, a one-way cut) while four clients, one of them talking only to the cut-off leader,
+  record every call; the checker found every healthy-setting history linearizable and caught a switched-on stale-read
+  mistake (docs/RAFT.md). The partitions are made by dropping messages inside the servers, not at the network layer.
 - Buffered-read tests: a concurrent recording test (everything reported as recorded is delivered exactly once, in order),
   identical behaviour to exact LRU with one thread over random sequences, and an 8-thread stress test; six deliberate bugs
   in the buffer code were each caught by a failing test
@@ -299,6 +320,12 @@ cluster has not been tested on separate machines or under real network faults be
   behind when a snapshot is taken is also sent the whole snapshot rather than the few entries it misses. See docs/SNAPSHOTS.md.
 - The chunked InstallSnapshot is a new wire format: servers of an older build cannot be mixed with it.
 - The group is fixed: servers cannot be added or removed while it runs. There is no data migration.
+- Pre-vote is opt-in and must be set the same on every server (a mixed group is unsupported). In one of two Docker runs
+  with pre-vote the surviving servers did not elect a leader for over 60 seconds after the leader was killed, and I do not
+  know why; it did not reproduce in my Linux sandbox (docs/RAFT.md, docs/DOCKER.md).
+- The Docker Compose trial ran only the three servers and Prometheus (Grafana and its dashboard were never started), on a
+  small VM, one run per setting. With the default election timeouts the two surviving servers kept holding elections
+  under write load; the group is not tuned for a machine that small.
 - Tested on one machine only. Failover time and throughput on separate machines or a real network are unmeasured (procedure and tool: docs/MULTI_MACHINE.md).
 
 **Metrics**
@@ -316,7 +343,7 @@ cluster has not been tested on separate machines or under real network faults be
 - Done: Prometheus metrics for both server modes
 - Done: group commit for the Raft log, measured before and after (docs/GROUP_COMMIT.md)
 - Done: snapshots and log compaction with InstallSnapshot for lagging servers, measured (docs/SNAPSHOTS.md)
-- Written, not yet run: a three-server cluster with Prometheus and Grafana in Docker Compose (docs/DOCKER.md); the files parse and the metric names exist, but no container has been started from them.
+- Docker Compose files for a three-server cluster with Prometheus and Grafana (docs/DOCKER.md): the servers and Prometheus were run in a reduced trial (see below); Grafana and its dashboard were never started.
 - JCStress concurrency tests for the cache classes (docs/JCSTRESS.md): all 6 tests ran in `-m quick` on a 2-CPU Windows laptop: 84/84 jobs passed, 0 failed, 0 errors (short run, no CPU pinning; a pass is not a proof).
 - Done: project moved to Java 21 (the full suite passed on JDK 21 in my environment; the CI workflow still has to be switched to 21)
 - Done: the outgoing queue to each peer is limited by bytes as well as by message count (a dead follower used to make the leader queue without a practical limit; docs/RAFT.md)
@@ -324,12 +351,13 @@ cluster has not been tested on separate machines or under real network faults be
 - Done: chunked snapshot transfer (1 MiB chunks, acknowledged one at a time; tested including a 42 MB state, above the old 32 MiB limit)
 - Done: opt-in buffered reads with a before/after JMH comparison (docs/READ_BUFFER.md); not yet exposed as a server flag
 - Done: opt-in event-loop server (`--io nio`, no TLS or replication): same replies byte for byte as the blocking server on 35 test inputs; in my Linux sandbox 8,000 idle connections cost 0 extra threads and 46 MiB instead of 8,000 threads and 577 MiB, throughput was higher at 16-256 connections but p99 latency was worse at 64; on the Windows laptop 2,000 idle connections cost 0 extra threads and 11 MiB instead of 1,999 threads and 178 MiB, and throughput showed no gain (17.6k against 19.0k requests/s, one run each) (docs/NIO.md)
-- Done: opt-in Raft pre-vote (`--pre-vote`, docs/RAFT.md): in the simulator a node that cannot hear the leader deposes it without pre-vote and does not with it; 38 tests, two hand-made breakages caught, one real-socket 3-node test; full suite 660 tests, 0 failures on the Windows laptop (one run); election-delay cost not measured
+- Done: opt-in Raft pre-vote (`--pre-vote`, docs/RAFT.md): in the simulator a node that cannot hear the leader deposes it without pre-vote and does not with it; 39 tests, two hand-made breakages caught, real-socket tests; full suite 669 tests, 0 failures on the Windows laptop (one run); election-delay cost not measured
 - Done (one run each, one 2-CPU laptop): a reduced Docker Compose trial, three servers plus Prometheus in a 1.8 GiB Docker VM (docs/DOCKER.md): 35 to 48 MiB per server idle; with all three up, about 1,100 writes per 60 s acknowledged and none lost; killing the leader under load caused 16 s stalls with the default timings and 2.9 s with longer ones. One pre-vote run did not elect a new leader within 60 s and the cause is not known
 - Done: real-server network-partition tests with recorded histories checked for linearizability (5 servers, leader cut off alone or with one follower, random cuts, one-way cut; docs/RAFT.md); a switched-on stale-read mistake is caught; full suite 669 tests, 0 failures on the Windows laptop (one run)
 - Done: opt-in TLS for the replicated mode (docs/SECURITY.md); cost not measured
 - Done: opt-in read-index reads (`--read-mode read-index`), linearizability-checked and measured (docs/READ_INDEX.md): a large GET gain with fsync on and few clients, none shown otherwise
 - Done (one 2-CPU, 4 GB Windows laptop): GC pauses under G1, Parallel and ZGC and snapshot-taking time by cache size (docs/GC_PAUSES.md). The first runs were probably distorted by memory shortage; with a 1 GiB heap and 500,000 entries the worst stall of any collector was 0.5 s and ZGC stop-the-world pauses were under 2 ms. Not repeated, no larger machine tried. Before snapshots moved to the background, taking one of 500,000 entries took 0.86 s on that laptop, longer than the default election timeout, and a test showed the leader losing leadership; now only the state-freezing step runs on the Raft thread: 6.2 ms median (worst 6.7) for 100,000 entries and 22.9 ms median (worst 32.1) for 500,000 on that laptop, with encoding (0.88 s median at 500,000) done in the background. In a 3-server test there with an 800 ms snapshot the leader kept term 1 and the slowest write was 19 ms. Freeze time for larger states was not measured there. Tool written but not yet run for results: `RemoteProbe` for separate machines (docs/MULTI_MACHINE.md, results table empty).
-- Not started (ideas, in the order I would do them): measuring the hit-ratio cost of buffered
-  reads
+- Not started (ideas, in the order I would do them): membership changes (add and remove a server in a running group),
+  leadership transfer, several Raft groups behind the consistent-hash client, a better eviction policy measured by hit
+  ratio, a run on separate machines (docs/MULTI_MACHINE.md), measuring the hit-ratio cost of buffered reads
 - Dropped: a separate failover monitor process (Raft elects its own leader) and data migration on membership changes
