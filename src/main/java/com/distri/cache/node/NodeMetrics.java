@@ -75,6 +75,9 @@ final class NodeMetrics {
         registry.gauge("districache_raft_prevotes_denied",
                 "Pre-vote requests from other servers this one refused (0 unless --pre-vote); only grows.",
                 () -> with(server, NodeRuntime::preVotesDenied));
+        registry.gauge("districache_raft_leadership_transfers",
+                "Leadership transfers this server started as leader (a transfer succeeded if another server's times_became_leader rose); only grows.",
+                () -> with(server, NodeRuntime::transfersStarted));
         registry.gauge("districache_raft_snapshot_index",
                 "Log index covered by this server's latest snapshot (entries up to it were dropped from the log); 0 for none.",
                 () -> with(server, NodeRuntime::snapshotIndex));
@@ -120,6 +123,9 @@ final class NodeMetrics {
 
     void record(ClientProtocol.Request request, ClientProtocol.Response response, long nanos) {
         int op = request.op() >= 1 && request.op() <= 3 ? request.op() : 0;
+        if (op == 0) {
+            return; // admin requests are not cache traffic
+        }
         int status = response.status() >= 0 && response.status() < OUTCOMES.length ? response.status() : 4;
         if (op != 0) {
             requests[op][status].increment();

@@ -2,11 +2,11 @@ package com.distri.cache.raft;
 
 import java.util.List;
 
-/** The messages of the Raft protocol (the five of the paper, the reply to a snapshot chunk, and the optional pre-vote pair). Every message carries the sender's current term. */
+/** The messages of the Raft protocol (the five of the paper, the reply to a snapshot chunk, the optional pre-vote pair, and the leadership-transfer trigger). Every message carries the sender's current term. */
 public sealed interface RaftMessage
         permits RaftMessage.RequestVote, RaftMessage.RequestVoteReply, RaftMessage.AppendEntries,
         RaftMessage.AppendEntriesReply, RaftMessage.InstallSnapshot, RaftMessage.SnapshotChunkReply,
-        RaftMessage.PreVote, RaftMessage.PreVoteReply {
+        RaftMessage.PreVote, RaftMessage.PreVoteReply, RaftMessage.TimeoutNow {
 
     long term();
 
@@ -27,6 +27,13 @@ public sealed interface RaftMessage
      * receiver's real current term, so a candidate that has fallen behind learns it.
      */
     record PreVoteReply(long term, boolean granted) implements RaftMessage {}
+
+    /**
+     * Leadership transfer (Raft thesis section 3.10): the leader tells a follower whose log it has just brought up to date
+     * to start an election at once, without waiting for its timeout and without a pre-vote round. {@code term} is the
+     * leader's term; a follower obeys only if that is its own current term and the sender is the leader it follows.
+     */
+    record TimeoutNow(long term) implements RaftMessage {}
 
     /**
      * The leader replicates entries (empty for a heartbeat). {@code prevLogIndex/prevLogTerm} identify the entry

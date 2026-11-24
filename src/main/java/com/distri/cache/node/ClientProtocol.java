@@ -16,6 +16,8 @@ final class ClientProtocol {
     static final byte SET = 1;
     static final byte DEL = 2;
     static final byte GET = 3;
+    /** Admin: hand leadership to the server whose id is the decimal number in {@code key}. Not a cache operation. */
+    static final byte TRANSFER = 4;
 
     static final byte OK = 0;
     static final byte NOT_LEADER = 1;
@@ -53,7 +55,7 @@ final class ClientProtocol {
     static Request decodeRequest(byte[] data) throws IOException {
         DataInputStream in = new DataInputStream(new ByteArrayInputStream(data));
         byte op = in.readByte();
-        if (op != SET && op != DEL && op != GET) {
+        if (op != SET && op != DEL && op != GET && op != TRANSFER) {
             throw new IOException("unknown operation " + op);
         }
         long clientId = in.readLong();

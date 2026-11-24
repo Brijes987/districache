@@ -26,6 +26,7 @@ final class ReplicatedChaos {
         long batchedEntries;
         long largestBatch;
         long snapshotsTaken;
+        int transfers;
         long snapshotsInstalled;
         long snapshotChunksReceived;
     }
@@ -96,6 +97,13 @@ final class ReplicatedChaos {
     static Result run(long seed, int steps, Chaos.Profile faults, RaftConfig config, ReplicatedCache.Fault fault,
             Path storageDir, boolean endStateChecks, boolean batching, ReplicatedCache.ReadMode readMode,
             int snapshotDelaySteps) {
+        return run(seed, steps, faults, config, fault, storageDir, endStateChecks, batching, readMode, snapshotDelaySteps, 0);
+    }
+
+    /** @param transferRate chance per tick that the leader is asked to hand over leadership (0: never) */
+    static Result run(long seed, int steps, Chaos.Profile faults, RaftConfig config, ReplicatedCache.Fault fault,
+            Path storageDir, boolean endStateChecks, boolean batching, ReplicatedCache.ReadMode readMode,
+            int snapshotDelaySteps, double transferRate) {
         int n = seed % 2 == 0 ? 3 : 5;
         ReplicatedHarness h = new ReplicatedHarness(n, seed, config, storageDir, batching, readMode, snapshotDelaySteps);
         if (fault != null) {
@@ -107,6 +115,7 @@ final class ReplicatedChaos {
         ReplicatedChaos run = new ReplicatedChaos(h, seed, readMode == ReplicatedCache.ReadMode.READ_INDEX);
         Chaos chaos = new Chaos(h.cluster, seed);
         chaos.beforeStep = run::tick;
+        chaos.transferRate = transferRate;
         Chaos.Profile noRandomProposals = new Chaos.Profile(0, faults.crashRate(), faults.restartRate(),
                 faults.partitionRate(), faults.healRate(), faults.networkChangeRate());
         chaos.run(steps, noRandomProposals);
@@ -115,6 +124,7 @@ final class ReplicatedChaos {
         run.result.batches = h.batches;
         run.result.batchedEntries = h.batchedEntries;
         run.result.largestBatch = h.largestBatch;
+        run.result.transfers = h.cluster.transfersStarted;
         run.result.snapshotsTaken = h.snapshotsTaken;
         run.result.snapshotsInstalled = h.snapshotsInstalled;
         run.result.snapshotChunksReceived = h.snapshotChunksReceived;

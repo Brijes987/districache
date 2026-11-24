@@ -52,6 +52,7 @@ final class NodeRuntime implements AutoCloseable {
     private volatile long pendingReads;
     private volatile long preVoteRounds;  // pre-vote rounds this node started (0 unless --pre-vote)
     private volatile long preVotesDenied; // pre-vote requests this node refused
+    private volatile long transfersStarted; // leadership transfers this node started
 
     /**
      * @param maxBatch group commit: the loop runs at most this many queued tasks in a row, without waiting, and proposes the client writes among them with ONE log append (one
@@ -185,6 +186,14 @@ final class NodeRuntime implements AutoCloseable {
         return preVotesDenied;
     }
 
+    long transfersStarted() {
+        return transfersStarted;
+    }
+
+    RaftNode raftNodeForServer() {
+        return node;
+    }
+
     long snapshotIndex() {
         return snapshotIndex;
     }
@@ -294,6 +303,7 @@ final class NodeRuntime implements AutoCloseable {
         pendingReads = node.pendingReads();
         preVoteRounds = node.preVoteRoundsStarted();
         preVotesDenied = node.preVotesDenied();
+        transfersStarted = node.transfersStarted();
     }
 
     @Override

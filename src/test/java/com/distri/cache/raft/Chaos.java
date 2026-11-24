@@ -29,6 +29,8 @@ final class Chaos {
     private int counter;
     /** Optional: runs before every simulated step, so a test can drive clients alongside the faults. */
     Runnable beforeStep = () -> { };
+    /** Chance per tick that the current leader is asked to hand leadership to a random other server. 0 draws no random numbers. */
+    double transferRate;
 
     Chaos(SimCluster cluster, long seed) {
         this.cluster = cluster;
@@ -44,6 +46,13 @@ final class Chaos {
                 String command = "c" + cluster.seed + "-" + (counter++);
                 if (cluster.propose(node, command).accepted()) {
                     proposed.add(command);
+                }
+            }
+            if (transferRate > 0 && random.nextDouble() < transferRate) {
+                int leader = cluster.leader();
+                int target = random.nextInt(n);
+                if (leader >= 0 && target != leader) {
+                    cluster.transfer(leader, target);
                 }
             }
             if (random.nextDouble() < p.crashRate()) {

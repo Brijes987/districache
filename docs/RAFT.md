@@ -20,6 +20,7 @@ Package `com.distri.cache.raft`:
   commit indirectly. A new leader appends a no-op of its term so earlier entries can commit promptly.
 - Followers limit `commitIndex` to the entries verified against the current leader.
 - Check-quorum: a leader that has not heard from a majority for an election timeout steps down.
+- Leadership transfer on request (see its section below).
 - Deterministic design: the node has no threads, clocks or sockets. It is driven by `tick()` and `receive(from, msg)` and
   talks through a `Transport` and a `RaftStorage` interface, so the same code can later run over TCP and files.
 
@@ -191,6 +192,54 @@ All commands assume the project is built (`mvn compile`) and you are in the proj
 **Docker, under write load (docs/DOCKER.md).** In one of two runs on a 2-CPU Docker VM, killing the leader left the two surviving servers without a leader for over 60 seconds with pre-vote on; the other run recovered after 2.9 s. I could not reproduce the failure in my Linux sandbox and do not know its cause, so pre-vote is not shown to be reliable under load in that setting.
 
 **Not measured / not claimed.** Nothing was run on separate machines or under real network faults. The cost of the extra round (election delay) was not measured.
+
+## Leadership transfer (`transferLeadership`, admin request `RemoteProbe transfer --to ID`)
+
+A leader can hand over to a chosen follower (Raft thesis section 3.10), for example before the leader's machine is taken
+down for maintenance, so clients do not wait for an election timeout. How it works:
+
+1. The leader stops accepting new writes (they are refused with "no leader known" and the client retries), so the target's
+   log stops falling behind. Reads through read-index are still served.
+2. It brings the target's log level with its own, using the normal AppendEntries.
+3. It sends the target a `TimeoutNow` (new message, wire code 9). A follower obeys it only if it comes from the leader it
+   follows and carries its current term. The target then starts a real election at once, skipping pre-vote and the wait.
+4. The target's term is higher, so the old leader steps down when it hears it; the target has every entry, so it wins.
+5. If the target has not become leader within one maximum election timeout, the leader drops the transfer and carries on.
+
+Nothing here can break safety: it only makes an election start early, and elections still follow the voting rules.
+
+**Tests** (`LeadershipTransferTest`, 14 tests; `LeadershipTransferClusterTest`, 6 tests on real servers):
+
+| What | Result in the Linux sandbox |
+|---|---|
+| Healthy 3-server handover, 20 seeds, pre-vote on and off | target leads in exactly one election (term +1, no other election), in under 10 ticks with 1-tick links |
+| A target that is behind (leader to target link cut one way during 5 writes, then healed) | the leader catches it up first; target wins in one election, 20 of 20 seeds |
+| Handover with an entry proposed but not yet committed | the entry is applied on all 3 servers, 20 of 20 seeds |
+| Target unreachable | writes refused while pending, leader gives up after an election timeout and accepts writes again |
+| Random crashes, partitions, loss and duplication with leaders asked to hand over at random (90 seeds, with and without snapshots) | all Raft invariants held on every tick; at least 300 transfers actually started |
+| Linearizability checker on client histories with random handovers (80 runs, log reads and read-index, with and without group commit) | all linearizable; at least 300 transfers started |
+| Real servers: admin request, then writes and reads | target became leader in 10 to 20 ms on loopback, exactly one term increase |
+| Real servers: 6 handovers while a writer runs | 0 writes failed, every acknowledged write read back; target led after 10 to 20 ms each |
+
+**Three hand-made breakages are caught** (each is a switch in `RaftConfig.Fault`, testing only): `TRANSFER_SKIP_CATCHUP`
+(TimeoutNow sent before the target is level: the handover fails in 20 of 20 seeds, because the target loses the vote),
+`TRANSFER_KEEP_ACCEPTING` (the leader keeps taking writes during a transfer: caught in 10 of 10 seeds), and
+`TIMEOUT_NOW_FROM_ANYONE` (a follower obeys any TimeoutNow: caught by the scripted test). These are liveness and
+disruption breakages, not safety ones; a transfer cannot make Raft unsafe, which is why the safety evidence is the
+random-fault runs above.
+
+**A real client bug found on the way and fixed.** When a server refused a request (an `ERROR` reply, for example a
+transfer to a server id that is not in the group), `ReplicatedClient` threw its own exception inside the retry loop, and
+the loop caught it as an I/O problem and retried until the 20 s deadline, then reported "no answer". A refusal is now
+thrown at once (429 ms in the test). It affected every server-side `ERROR`, not only transfers.
+
+**Windows run (2-CPU Windows 10 laptop, one run).** The full `mvn clean test` gave 689 tests, 0 failures, 0 errors (6 min 56 s),
+including all 20 new ones. On real servers one handover took 20 ms without pre-vote and 18 ms with it (term 1 to 2 each time);
+six handovers under a running writer took 31, 32, 15, 31, 15 and 30 ms until the target led, with 490 writes acknowledged
+and none failed. The 15 and 30 ms steps suggest the 10 ms server tick matters, but I did not test that. **Not measured / not claimed:** handover time on separate machines or under load from many
+clients; the loopback numbers above are for a 3-server group on one machine and are not a guaranteed handover time.
+The admin request is unauthenticated beyond the group's client secret, if one is set. It is a one-shot request: if the
+target is down or cannot catch up, the transfer silently times out and the caller sees only that the leader did not change.
 
 ## Network partitions on real servers (`RealPartitionLinearizabilityTest`)
 

@@ -22,6 +22,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * smoke                       write a key, read it back, say which server answered
  * bench  [--clients N] [--seconds S] [--op set|get]   closed-loop load, prints ops/second and latency percentiles
+ * transfer --to ID           ask the leader to hand leadership to the server with that id (admin; prints the leader before and
+ *                             after, as seen by a write)
  * watch  [--seconds S] [--rate R]   one writer sends R numbered writes per second (default 20) for S seconds (default 60);
  *                             every slow or failed write is printed as it happens, so you can kill or cut off the leader
  *                             by hand while it runs. At the end it reads back every ACKNOWLEDGED write and reports the
@@ -50,6 +52,7 @@ public final class RemoteProbe {
         int seconds = -1;
         int rate = 20;
         String op = "set";
+        int to = -1;
         try {
             for (int i = 1; i < args.length; i++) {
                 switch (args[i]) {
@@ -70,6 +73,7 @@ public final class RemoteProbe {
                     case "--seconds" -> seconds = Integer.parseInt(args[++i]);
                     case "--rate" -> rate = Integer.parseInt(args[++i]);
                     case "--op" -> op = args[++i];
+                    case "--to" -> to = Integer.parseInt(args[++i]);
                     default -> throw new IllegalArgumentException("unknown option " + args[i]);
                 }
             }
@@ -77,7 +81,7 @@ public final class RemoteProbe {
             System.err.println(e.getMessage());
             usage();
         }
-        if (servers.isEmpty() || !Arrays.asList("smoke", "bench", "watch").contains(mode)
+        if (servers.isEmpty() || !Arrays.asList("smoke", "bench", "watch", "transfer").contains(mode) || (mode.equals("transfer") && to < 0)
                 || !(op.equals("set") || op.equals("get")) || clients < 1 || rate < 1) {
             usage();
         }
@@ -107,6 +111,7 @@ public final class RemoteProbe {
                 + servers.stream().map(a -> a.getHostString() + ":" + a.getPort()).toList() + (tls != null ? ", TLS" : ", plain TCP (no TLS)"));
         switch (mode) {
             case "smoke" -> smoke(resolved, secret, tls);
+            case "transfer" -> transfer(resolved, secret, tls, to);
             case "bench" -> bench(resolved, secret, tls, clients, seconds < 0 ? 10 : seconds, op);
             default -> watch(resolved, secret, tls, seconds < 0 ? 60 : seconds, rate);
         }
@@ -114,14 +119,41 @@ public final class RemoteProbe {
     }
 
     private static void usage() {
-        System.err.println("usage: RemoteProbe smoke|bench|watch --servers h:p,h:p,h:p [--client-secret-file F]"
-                + " [--tls-truststore F --tls-truststore-password-file F] [--clients N] [--seconds S] [--rate R] [--op set|get]");
+        System.err.println("usage: RemoteProbe smoke|bench|watch|transfer --servers h:p,h:p,h:p [--client-secret-file F]"
+                + " [--tls-truststore F --tls-truststore-password-file F] [--clients N] [--seconds S] [--rate R] [--op set|get] [--to ID]");
         System.exit(2);
     }
 
     private static ReplicatedClient client(List<InetSocketAddress> servers, byte[] secret, javax.net.ssl.SSLContext tls,
             long timeoutMillis) {
         return new ReplicatedClient(servers, secret, timeoutMillis, tls);
+    }
+
+    private static void transfer(List<InetSocketAddress> servers, byte[] secret, javax.net.ssl.SSLContext tls, int to)
+            throws IOException {
+        try (ReplicatedClient c = client(servers, secret, tls, 20_000)) {
+            c.set("probe-transfer-before", "x");
+            InetSocketAddress before = c.lastAnsweredBy();
+            boolean started = c.transferLeadership(to);
+            System.out.println(started ? "transfer to server " + to + " started" : "server " + to + " is already the leader");
+            long t0 = System.nanoTime();
+            InetSocketAddress after = before;
+            for (int i = 0; i < 200 && started; i++) {
+                c.set("probe-transfer-after", "x");
+                after = c.lastAnsweredBy();
+                if (!after.equals(before)) {
+                    break;
+                }
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            System.out.printf("leader before: %s, after: %s (%.0f ms until a write was answered by a different server)%n",
+                    before, after, (System.nanoTime() - t0) / 1e6);
+        }
     }
 
     private static void smoke(List<InetSocketAddress> servers, byte[] secret, javax.net.ssl.SSLContext tls) throws IOException {

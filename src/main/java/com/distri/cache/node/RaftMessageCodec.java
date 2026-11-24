@@ -21,6 +21,7 @@ final class RaftMessageCodec {
     private static final byte SNAPSHOT_CHUNK_REPLY = 6;
     private static final byte PRE_VOTE = 7;
     private static final byte PRE_VOTE_REPLY = 8;
+    private static final byte TIMEOUT_NOW = 9;
     private static final int MAX_ENTRIES = 100_000;
 
     private RaftMessageCodec() {}
@@ -87,6 +88,9 @@ final class RaftMessageCodec {
                 out.writeByte(PRE_VOTE_REPLY);
                 out.writeLong(m.term());
                 out.writeBoolean(m.granted());
+            } else if (message instanceof RaftMessage.TimeoutNow m) {
+                out.writeByte(TIMEOUT_NOW);
+                out.writeLong(m.term());
             } else {
                 throw new IllegalArgumentException("unknown message type " + message);
             }
@@ -158,6 +162,7 @@ final class RaftMessageCodec {
             case PRE_VOTE -> message = new RaftMessage.PreVote(positive(in.readLong()), in.readInt(),
                     nonNegative(in.readLong()), nonNegative(in.readLong()));
             case PRE_VOTE_REPLY -> message = new RaftMessage.PreVoteReply(nonNegative(in.readLong()), in.readBoolean());
+            case TIMEOUT_NOW -> message = new RaftMessage.TimeoutNow(positive(in.readLong()));
             default -> throw new IOException("unknown message type " + type);
         }
         if (in.available() != 0) {

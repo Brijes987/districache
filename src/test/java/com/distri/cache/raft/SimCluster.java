@@ -294,6 +294,23 @@ final class SimCluster {
         return r;
     }
 
+    /** How many times a test asked a leader to hand over and it agreed. */
+    int transfersStarted;
+
+    /** Asks node {@code i} (if it is up) to transfer leadership to {@code target}. */
+    RaftNode.TransferResult transfer(int i, int target) {
+        if (nodes[i] == null) {
+            return RaftNode.TransferResult.NOT_LEADER;
+        }
+        RaftNode.TransferResult r = nodes[i].transferLeadership(target);
+        observe(i);
+        if (r == RaftNode.TransferResult.STARTED) {
+            transfersStarted++;
+            event("transfer leadership " + i + " -> " + target);
+        }
+        return r;
+    }
+
     // ------------------------------------------------------------------ network
 
     private void send(int from, int to, RaftMessage message) {

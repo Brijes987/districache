@@ -76,7 +76,13 @@ public record RaftConfig(int electionTimeoutMinTicks, int electionTimeoutMaxTick
         /** A node grants a pre-vote even though it heard from a live leader within the election timeout. */
         PREVOTE_IGNORE_LEADER_LEASE,
         /** A node that receives a pre-vote for a higher term adopts that term, as it would for a real vote request. */
-        PREVOTE_ADOPT_TERM
+        PREVOTE_ADOPT_TERM,
+        /** A leader transferring leadership sends TimeoutNow at once, without waiting until the target holds its whole log. */
+        TRANSFER_SKIP_CATCHUP,
+        /** A leader transferring leadership keeps accepting new writes, so the target's log may never catch up. */
+        TRANSFER_KEEP_ACCEPTING,
+        /** A follower starts an election on any TimeoutNow, even one from a server that is not its leader or from an old term. */
+        TIMEOUT_NOW_FROM_ANYONE
     }
 
     public RaftConfig {

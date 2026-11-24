@@ -332,6 +332,7 @@ public final class ReplicatedServer implements AutoCloseable {
             future = runtime.call(() -> switch (r.op()) {
                 case ClientProtocol.SET -> cache.set(r.clientId(), r.seq(), r.key(), r.value(), r.ttlMillis());
                 case ClientProtocol.DEL -> cache.delete(r.clientId(), r.seq(), r.key());
+                case ClientProtocol.TRANSFER -> transfer(r.key());
                 default -> cache.get(r.clientId(), r.seq(), r.key());
             });
             ReplicatedCache.Reply reply = future.get(config.requestTimeoutMillis(), TimeUnit.MILLISECONDS);
@@ -353,6 +354,27 @@ public final class ReplicatedServer implements AutoCloseable {
             Thread.currentThread().interrupt();
             return new ClientProtocol.Response(ClientProtocol.UNKNOWN, false, "", "", "");
         }
+    }
+
+    /** Runs on the Raft thread. OK with found=true: a transfer started; OK with found=false: already the leader. */
+    private CompletableFuture<ReplicatedCache.Reply> transfer(String target) {
+        int id;
+        try {
+            id = Integer.parseInt(target);
+        } catch (NumberFormatException e) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("not a server id: " + target));
+        }
+        RaftNode node = runtime.raftNodeForServer();
+        return switch (node.transferLeadership(id)) {
+            case STARTED -> CompletableFuture.completedFuture(
+                    new ReplicatedCache.Reply(ReplicatedCache.Kind.OK, true, null, node.id()));
+            case ALREADY_LEADER -> CompletableFuture.completedFuture(
+                    new ReplicatedCache.Reply(ReplicatedCache.Kind.OK, false, null, node.id()));
+            case NOT_LEADER -> CompletableFuture.completedFuture(
+                    new ReplicatedCache.Reply(ReplicatedCache.Kind.NOT_LEADER, false, null, node.leaderId()));
+            case NOT_A_PEER -> CompletableFuture.failedFuture(
+                    new IllegalArgumentException("server " + id + " is not a member of this group"));
+        };
     }
 
     private String addressOf(int id) {

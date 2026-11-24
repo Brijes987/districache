@@ -96,6 +96,17 @@ public final class ReplicatedClient implements AutoCloseable {
         return execute(ClientProtocol.DEL, key, "", -1).found();
     }
 
+    /**
+     * Asks the leader to hand leadership to the server with id {@code serverId} (see
+     * {@link com.distri.cache.raft.RaftNode#transferLeadership}). Returns once the leader has accepted the request, which
+     * is before the handover has happened.
+     *
+     * @return true if a transfer was started, false if that server is already the leader
+     */
+    public synchronized boolean transferLeadership(int serverId) throws ReplicatedClientException {
+        return execute(ClientProtocol.TRANSFER, Integer.toString(serverId), "", -1).found();
+    }
+
     public long clientId() {
         return clientId;
     }
@@ -154,6 +165,8 @@ public final class ReplicatedClient implements AutoCloseable {
                         throw new IllegalStateException("server answered STALE to a request this client had just "
                                 + "numbered; the client id is not unique or the client is used from two threads");
                 }
+            } catch (ReplicatedClientException e) {
+                throw e; // a definite answer from the server (a refused request): retrying cannot change it
             } catch (IOException e) {
                 lastProblem = e;
                 disconnect();

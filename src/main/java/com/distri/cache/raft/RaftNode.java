@@ -23,8 +23,8 @@ import java.util.Set;
  * Everything else (role, commit index, what has been applied, leader state) is rebuilt after a restart.
  *
  * <p>Also included: a new leader appends a no-op entry so that entries of earlier terms become committed; a leader
- * that cannot hear from a majority for an election timeout steps down (check-quorum). Not included: pre-vote,
- * membership changes.
+ * that cannot hear from a majority for an election timeout steps down (check-quorum); pre-vote (opt-in);
+ * leadership transfer ({@link #transferLeadership}). Not included: membership changes.
  * A snapshot travels in chunks (one in flight per follower, acknowledged one by one), so a large snapshot never
  * blocks the heartbeats queued behind it.
  *
@@ -146,6 +146,12 @@ public final class RaftNode {
     private boolean snapshotInFlight;
     private long snapshotsInstalled;
     private long snapshotsSkipped;
+    /** Leadership transfer in progress: the follower this leader is handing over to, or -1. */
+    private int transferTarget = -1;
+    private long transferStartedAt;
+    private boolean timeoutNowSent;
+    private long transfersStarted;
+    private long timeoutNowReceived;
     private ReadListener readListener;
     private long readRound;                              // number of the latest read started by this leader
     private long termStartIndex;                         // index of this leader's first entry (its no-op)
@@ -291,6 +297,21 @@ public final class RaftNode {
         return preVotesDenied;
     }
 
+    /** Leadership transfers this node started as leader. */
+    public long transfersStarted() {
+        return transfersStarted;
+    }
+
+    /** The server this leader is handing leadership to, or -1 when no transfer is in progress. */
+    public int transferTarget() {
+        return transferTarget;
+    }
+
+    /** Times this node obeyed a TimeoutNow (started an election because its leader asked). */
+    public long timeoutNowReceived() {
+        return timeoutNowReceived;
+    }
+
     /** Times a snapshot was due but the state was too large to snapshot. */
     public long snapshotsSkipped() {
         return snapshotsSkipped;
@@ -306,6 +327,9 @@ public final class RaftNode {
             if (heartbeatElapsed >= config.heartbeatTicks()) {
                 heartbeatElapsed = 0;
                 broadcastAppend();
+            }
+            if (transferTarget != -1 && ticks - transferStartedAt >= config.electionTimeoutMaxTicks()) {
+                transferTarget = -1; // the target did not take over in an election timeout: carry on as leader
             }
             if (config.checkQuorum()) {
                 quorumElapsed++;
@@ -355,6 +379,10 @@ public final class RaftNode {
         }
         if (role != Role.LEADER) {
             return new ProposeResult(false, 0, currentTerm, leaderId);
+        }
+        if (transferTarget != -1 && !config.faults().contains(RaftConfig.Fault.TRANSFER_KEEP_ACCEPTING)) {
+            // Handing over: no new entries, or the target's log would keep falling behind. No leader to point to yet.
+            return new ProposeResult(false, 0, currentTerm, -1);
         }
         List<LogEntry> entries = new ArrayList<>(commands.size());
         for (byte[] command : commands) {
@@ -468,7 +496,61 @@ public final class RaftNode {
             onInstallSnapshot(from, m);
         } else if (message instanceof RaftMessage.SnapshotChunkReply m) {
             onSnapshotChunkReply(from, m);
+        } else if (message instanceof RaftMessage.TimeoutNow m) {
+            onTimeoutNow(from, m);
         }
+    }
+
+    // ------------------------------------------------------------------ leadership transfer
+
+    /** What {@link #transferLeadership} did. */
+    public enum TransferResult { STARTED, NOT_LEADER, NOT_A_PEER, ALREADY_LEADER }
+
+    /**
+     * Hands leadership to {@code target} (Raft thesis section 3.10). The leader stops accepting new writes, brings the
+     * target's log up to date, then sends it a TimeoutNow, on which the target starts an election at once (no pre-vote,
+     * no waiting). Its term is higher, so this leader steps down when it hears it. Nothing here weakens safety: it only
+     * causes an election, and elections obey the usual voting rules. If the target has not taken over within an election
+     * timeout the transfer is abandoned and this node carries on as leader. Returns at once; the caller watches for the
+     * target to become leader.
+     */
+    public TransferResult transferLeadership(int target) {
+        if (role != Role.LEADER) {
+            return TransferResult.NOT_LEADER;
+        }
+        if (target == id) {
+            return TransferResult.ALREADY_LEADER;
+        }
+        if (!peers.contains(target)) {
+            return TransferResult.NOT_A_PEER;
+        }
+        transferTarget = target;
+        transferStartedAt = ticks;
+        timeoutNowSent = false;
+        transfersStarted++;
+        if (config.faults().contains(RaftConfig.Fault.TRANSFER_SKIP_CATCHUP) || matchIndex.get(target) >= storage.lastIndex()) {
+            sendTimeoutNow();
+        } else {
+            sendAppend(target); // the catch-up; the reply that shows it is level triggers the TimeoutNow
+        }
+        return TransferResult.STARTED;
+    }
+
+    private void sendTimeoutNow() {
+        if (timeoutNowSent || transferTarget == -1) {
+            return;
+        }
+        timeoutNowSent = true;
+        transport.send(transferTarget, new RaftMessage.TimeoutNow(currentTerm));
+    }
+
+    private void onTimeoutNow(int from, RaftMessage.TimeoutNow m) {
+        boolean fromMyLeader = role == Role.FOLLOWER && from == leaderId && m.term() == currentTerm;
+        if (!fromMyLeader && !config.faults().contains(RaftConfig.Fault.TIMEOUT_NOW_FROM_ANYONE)) {
+            return; // not from the leader this node follows, or from an old term: ignore
+        }
+        timeoutNowReceived++;
+        startElection();
     }
 
     // ------------------------------------------------------------------ elections
@@ -590,6 +672,7 @@ public final class RaftNode {
     private void becomeLeader() {
         role = Role.LEADER;
         leaderId = id;
+        transferTarget = -1;
         heartbeatElapsed = 0;
         quorumElapsed = 0;
         heardFrom.clear();
@@ -617,6 +700,7 @@ public final class RaftNode {
             incoming = null; // a half-received snapshot belongs to a leader of an older term
         }
         boolean wasLeader = role == Role.LEADER;
+        transferTarget = -1;
         role = Role.FOLLOWER;
         leaderId = leader;
         resetElectionTimer();
@@ -856,6 +940,9 @@ public final class RaftNode {
                 nextIndex.put(from, match + 1);
             }
             advanceCommit();
+            if (from == transferTarget && matchIndex.get(from) >= storage.lastIndex()) {
+                sendTimeoutNow(); // the target now holds every entry this leader has
+            }
             // Keep a lagging follower catching up without waiting for the next heartbeat, but only when this reply
             // made progress. Answering every (possibly duplicated) reply with another message would let duplicates
             // multiply; the heartbeat retries anything else.
